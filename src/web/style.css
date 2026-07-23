@@ -1,0 +1,59 @@
+:root {
+  --bg: #0f1115;
+  --card-bg: #171a21;
+  --text: #e6e8eb;
+  --muted: #8b93a1;
+  --accent: #4da6ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 24px 32px 8px;
+}
+
+h1 { margin: 0; font-size: 1.6rem; }
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  padding: 24px 32px;
+}
+
+.card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat {
+  font-size: 2rem;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--accent);
+}
+
+canvas {
+  max-height: 140px;
+}
