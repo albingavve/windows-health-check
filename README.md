@@ -20,6 +20,8 @@ why, and surfacing plain-English diagnoses instead of just numbers.
 
 ![Process Manager](screenshot_process_manager.png)
 
+![Startup & Services Audit](screenshot_startup_audit.png)
+
 ## Features
 
 **Live system overview**
