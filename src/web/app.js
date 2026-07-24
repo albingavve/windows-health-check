@@ -1,43 +1,161 @@
-const MAX_POINTS = 30;
-const cpuHistory = [];
-const memHistory = [];
+const GAUGE_START_DEG = 135;
+const GAUGE_SWEEP_DEG = 270;
+const GAUGE_DANGER_THRESHOLD = 80;
+const TWEEN_MS = 350;
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function makeChart(canvasId, label, color) {
-  const ctx = document.getElementById(canvasId).getContext("2d");
-  return new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: [],
-      datasets: [{
-        label,
-        data: [],
-        borderColor: color,
-        backgroundColor: color + "33",
-        tension: 0.3,
-        fill: true,
-        pointRadius: 0,
-      }],
-    },
-    options: {
-      animation: false,
-      scales: {
-        y: { min: 0, max: 100, ticks: { color: "#8b93a1" } },
-        x: { display: false },
-      },
-      plugins: { legend: { display: false } },
-    },
-  });
+function toRad(deg) {
+  return (deg * Math.PI) / 180;
 }
 
-const cpuChart = makeChart("cpu-chart", "CPU %", "#4da6ff");
-const memChart = makeChart("mem-chart", "Memory %", "#ff9f4d");
+function setupHiDPICanvas(canvas) {
+  const cssSize = canvas.clientWidth;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cssSize * dpr;
+  canvas.height = cssSize * dpr;
+  canvas.style.width = `${cssSize}px`;
+  canvas.style.height = `${cssSize}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  return { ctx, cssSize };
+}
 
-function pushPoint(chart, history, value) {
-  history.push(value);
-  if (history.length > MAX_POINTS) history.shift();
-  chart.data.labels = history.map((_, i) => i);
-  chart.data.datasets[0].data = history;
-  chart.update();
+function drawGauge(ctx, size, value, needleColor) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const center = size / 2;
+  const radius = size / 2 - 10;
+
+  ctx.clearRect(0, 0, size, size);
+
+  // Bezel arc
+  ctx.strokeStyle = "#4a5568";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(center, center, radius, toRad(GAUGE_START_DEG), toRad(GAUGE_START_DEG + GAUGE_SWEEP_DEG));
+  ctx.stroke();
+
+  // Danger zone tint past the threshold (jewel ruby — a status signal, not a decorative accent)
+  const dangerStartDeg = GAUGE_START_DEG + (GAUGE_DANGER_THRESHOLD / 100) * GAUGE_SWEEP_DEG;
+  ctx.strokeStyle = "rgba(201, 63, 74, 0.55)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(center, center, radius, toRad(dangerStartDeg), toRad(GAUGE_START_DEG + GAUGE_SWEEP_DEG));
+  ctx.stroke();
+
+  // Tick marks
+  for (let v = 0; v <= 100; v += 5) {
+    const isMajor = v % 20 === 0;
+    const angle = toRad(GAUGE_START_DEG + (v / 100) * GAUGE_SWEEP_DEG);
+    const outer = radius;
+    const inner = radius - (isMajor ? 10 : 5);
+    const x1 = center + outer * Math.cos(angle);
+    const y1 = center + outer * Math.sin(angle);
+    const x2 = center + inner * Math.cos(angle);
+    const y2 = center + inner * Math.sin(angle);
+
+    ctx.strokeStyle = isMajor ? "#7d8899" : "rgba(125, 136, 153, 0.5)";
+    ctx.lineWidth = isMajor ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    if (v === 0 || v === 50 || v === 100) {
+      const labelRadius = inner - 10;
+      const lx = center + labelRadius * Math.cos(angle);
+      const ly = center + labelRadius * Math.sin(angle);
+      ctx.fillStyle = "#7d8699";
+      ctx.font = "9px 'Share Tech Mono', monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(v), lx, ly);
+    }
+  }
+
+  // Needle — neon glow, color varies per gauge (cyan/magenta "competing" accents)
+  const needleAngle = toRad(GAUGE_START_DEG + (clamped / 100) * GAUGE_SWEEP_DEG);
+  ctx.save();
+  ctx.strokeStyle = needleColor;
+  ctx.shadowColor = needleColor;
+  ctx.shadowBlur = 10;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(center, center);
+  ctx.lineTo(center + (radius - 14) * Math.cos(needleAngle), center + (radius - 14) * Math.sin(needleAngle));
+  ctx.stroke();
+  ctx.restore();
+
+  // Hub — glowing power-core pivot
+  ctx.save();
+  ctx.shadowColor = needleColor;
+  ctx.shadowBlur = 6;
+  const hubGradient = ctx.createRadialGradient(center, center, 1, center, center, 7);
+  hubGradient.addColorStop(0, "#ffffff");
+  hubGradient.addColorStop(0.45, needleColor);
+  hubGradient.addColorStop(1, "#2a3142");
+  ctx.fillStyle = hubGradient;
+  ctx.beginPath();
+  ctx.arc(center, center, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function makeGaugeController(canvasId, needleColor) {
+  const canvas = document.getElementById(canvasId);
+  let { ctx, cssSize } = setupHiDPICanvas(canvas);
+  let displayedValue = 0;
+  let animationFrame = null;
+
+  function render(value) {
+    drawGauge(ctx, cssSize, value, needleColor);
+  }
+
+  render(0);
+
+  return function update(targetValue) {
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+
+    if (prefersReducedMotion) {
+      displayedValue = targetValue;
+      render(displayedValue);
+      return;
+    }
+
+    const startValue = displayedValue;
+    const startTime = performance.now();
+
+    function step(now) {
+      const progress = Math.min(1, (now - startTime) / TWEEN_MS);
+      const eased = 1 - (1 - progress) * (1 - progress);
+      displayedValue = startValue + (targetValue - startValue) * eased;
+      render(displayedValue);
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(step);
+      }
+    }
+
+    animationFrame = requestAnimationFrame(step);
+  };
+}
+
+const updateCpuGauge = makeGaugeController("cpu-chart", "#4de8dc");
+const updateMemGauge = makeGaugeController("mem-chart", "#ff2e88");
+
+const FLICKER_CHANCE = 0.12; // occasional, not on every update — a calm idle machine, not an alert
+
+function flickerValue(el) {
+  if (prefersReducedMotion) return;
+  if (Math.random() > FLICKER_CHANCE) return;
+  el.classList.remove("value-flicker");
+  void el.offsetWidth; // force reflow so the animation restarts on repeat updates
+  el.classList.add("value-flicker");
+}
+
+function setStatText(elementId, text) {
+  const el = document.getElementById(elementId);
+  el.textContent = text;
+  flickerValue(el);
 }
 
 async function pollStats() {
@@ -45,16 +163,13 @@ async function pollStats() {
     const res = await fetch("/api/stats");
     const data = await res.json();
 
-    document.getElementById("cpu-value").textContent = `${data.cpu_percent.toFixed(1)}%`;
-    document.getElementById("mem-value").textContent =
-      `${data.memory_percent.toFixed(1)}% (${data.memory_used_gb} / ${data.memory_total_gb} GB)`;
-    document.getElementById("disk-value").textContent =
-      `${data.disk_percent.toFixed(1)}% (${data.disk_used_gb} / ${data.disk_total_gb} GB)`;
-    document.getElementById("net-value").textContent =
-      `↑ ${data.net_sent_mb} MB / ↓ ${data.net_recv_mb} MB`;
+    setStatText("cpu-value", `${data.cpu_percent.toFixed(1)}%`);
+    setStatText("mem-value", `${data.memory_percent.toFixed(1)}% (${data.memory_used_gb} / ${data.memory_total_gb} GB)`);
+    setStatText("disk-value", `${data.disk_percent.toFixed(1)}% (${data.disk_used_gb} / ${data.disk_total_gb} GB)`);
+    setStatText("net-value", `↑ ${data.net_sent_mb} MB / ↓ ${data.net_recv_mb} MB`);
 
-    pushPoint(cpuChart, cpuHistory, data.cpu_percent);
-    pushPoint(memChart, memHistory, data.memory_percent);
+    updateCpuGauge(data.cpu_percent);
+    updateMemGauge(data.memory_percent);
   } catch (err) {
     console.error("Failed to fetch stats:", err);
   }
@@ -85,6 +200,7 @@ function sortStartupItems(items) {
 function buildGroupRow(source, count) {
   const tr = document.createElement("tr");
   tr.className = "group-row";
+  tr.dataset.source = source;
   const td = document.createElement("td");
   td.colSpan = 5;
   td.textContent = `${SOURCE_LABELS[source] || source} (${count})`;

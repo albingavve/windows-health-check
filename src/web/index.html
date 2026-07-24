@@ -3,8 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>PC Health Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="/assets/style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
   <header>
@@ -15,14 +20,18 @@
   <main class="grid">
     <section class="card">
       <h2>CPU</h2>
-      <p class="stat" id="cpu-value">--%</p>
-      <canvas id="cpu-chart"></canvas>
+      <div class="gauge-face">
+        <canvas id="cpu-chart"></canvas>
+        <p class="stat" id="cpu-value">--%</p>
+      </div>
     </section>
 
     <section class="card">
       <h2>Memory</h2>
-      <p class="stat" id="mem-value">--%</p>
-      <canvas id="mem-chart"></canvas>
+      <div class="gauge-face">
+        <canvas id="mem-chart"></canvas>
+        <p class="stat" id="mem-value">--%</p>
+      </div>
     </section>
 
     <section class="card">
