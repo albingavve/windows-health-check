@@ -251,3 +251,12 @@ Then open http://localhost:8000 in a browser.
   re-creating `psutil.Process` objects every single poll if a cached
   approach is more efficient, and profile if a feature feels sluggish
   rather than assuming it's fine.
+
+Known limitation: the Devices popup can occasionally return empty results
+under heavy concurrent polling load (WMI device queries contend with the
+2s stats/process/diagnostics polling for server thread pool availability).
+A genuine leak in timeout cleanup was fixed, but the underlying contention
+is an accepted, documented tradeoff for now, not fully resolved. If this
+becomes a frequent real problem in daily use, the real fix is likely
+isolating heavy WMI calls onto a dedicated worker rather than sharing
+FastAPI's default thread pool with the frequent-polling endpoints.

@@ -6,6 +6,8 @@ Run with: python -m src.main
 import os
 import socket
 import sys
+import threading
+import time
 import webbrowser
 
 import uvicorn
@@ -81,11 +83,56 @@ def _another_instance_already_running() -> bool:
     return _port_already_bound()
 
 
+def _is_launcher_invocation() -> bool:
+    """True when running under pythonw.exe — launch.vbs's no-console
+    launch path — as opposed to a plain terminal `python -m src.main`
+    session."""
+    return os.path.basename(sys.executable).lower() == "pythonw.exe"
+
+
+# Generous ceiling for _wait_for_server_then_open_browser below — normal
+# startup (including the reload wrapper's own spin-up) has been well under
+# this on this machine, but a slow/cold-cache first run shouldn't be cut
+# off prematurely.
+_SERVER_READY_MAX_WAIT_SECONDS = 20.0
+
+
+def _wait_for_server_then_open_browser() -> None:
+    """Poll the dashboard's own port until it accepts a connection (or the
+    ceiling above elapses regardless), then open the browser. Runs on a
+    background thread — started fire-and-forget from main() below — since
+    the reload loop on the main thread blocks for the whole life of the
+    process and can't be used to sequence this."""
+    deadline = time.monotonic() + _SERVER_READY_MAX_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((_HOST, _PORT), timeout=0.5):
+                break
+        except OSError:
+            time.sleep(0.2)
+    webbrowser.open(_DASHBOARD_URL)
+
+
 def main() -> None:
     if _another_instance_already_running():
         print("PC Health Dashboard is already running — opening it in your browser instead.")
         webbrowser.open(_DASHBOARD_URL)
         return
+
+    if _is_launcher_invocation():
+        # Only the no-console launcher path auto-opens a browser on a
+        # fresh start — a plain terminal `python -m src.main` (the normal
+        # dev workflow) doesn't and shouldn't, since that would pop open a
+        # new tab every time a developer restarts the dev server. This is
+        # also why launch.vbs no longer opens the browser itself: it used
+        # to, unconditionally, on top of whatever main() did — the two
+        # combined meant a launch while the dashboard was already running
+        # opened two tabs (this branch's browser-open above, *and*
+        # launch.vbs's own). Centralizing all browser-opening here, in the
+        # one place that actually knows which case just happened, fixes
+        # that without launch.vbs needing to duplicate any of this
+        # module's detection logic.
+        threading.Thread(target=_wait_for_server_then_open_browser, daemon=True).start()
 
     # Not using uvicorn's own reload=True: on this machine its Windows
     # restart path (src/...BaseReload.restart in uvicorn) sends a

@@ -712,18 +712,50 @@ def _query_monitors(wmi_namespace_connection: "wmi.WMI") -> list[Monitor]:
 
 _EMPTY_DEVICE_INVENTORY = DeviceInventory(usb_devices=[], keyboards=[], monitors=[])
 
-# Generous, but bounded: in every isolated test run during development
-# (FastAPI's TestClient, a plain background thread, a plain
-# multiprocessing.Process, and even a multiprocessing child spawned from
-# an asyncio executor thread — the same mechanism this project's own dev-
-# server reload wrapper uses) the full collection consistently completed
-# in under 3 seconds. But it was also observed, specifically and only
-# through the actual running dev server's real request-handling thread,
-# taking far longer with no clear cause found despite investigation.
-# Rather than leave that unresolved mystery able to hang a real request
-# indefinitely, this bounds it: on timeout, every field degrades to
-# empty — the same fallback already used for outright WMI failures.
-_DEVICE_INVENTORY_TIMEOUT_SECONDS = 8.0
+# Generous, but bounded: in an uncontended run the full collection
+# consistently completes in 1-2 seconds. Investigated at length (via
+# file-based logging, since stdout/stderr are unavailable under the
+# pythonw.exe launch path) after the Devices popup was reported empty
+# under launch.vbs: the Win32_PnPEntity query this collector depends on
+# was measured taking 5-17+ seconds on this machine while the live
+# dashboard's other polling (stats/diagnostics/processes every 2 seconds,
+# plus the WMI-based startup/service audit on load) was also running —
+# and, importantly, this reproduces identically under a plain terminal
+# `python -m src.main`, so it is NOT specific to pythonw.exe, COM
+# initialization under the launcher, or anything else launch.vbs changed.
+# The exact mechanism was never fully pinned down (candidates: WMI
+# provider-host contention, GIL contention from the other pollers'
+# CPU-bound Python-level work, or both) — measurements were inconsistent
+# even across identical clean-restart-and-settle attempts, so treat
+# "1-2s uncontended" as typical, not guaranteed. What *was* confirmed and
+# fixed below is a genuine, unbounded leak that made repeated slow/empty
+# results actively compound: bounding it here at least means a slow
+# occurrence degrades every field to empty (the same fallback already
+# used for outright WMI failures) instead of hanging the request
+# indefinitely — but an occasional empty Devices popup under real,
+# active dashboard use is a known, accepted residual risk, not something
+# this fully eliminates.
+_DEVICE_INVENTORY_TIMEOUT_SECONDS = 12.0
+
+# A persistent, small, BOUNDED pool — deliberately not a fresh
+# ThreadPoolExecutor(max_workers=1) created (and abandoned via
+# shutdown(wait=False)) on every single call, which was the previous
+# design here. That pattern leaked unboundedly: a call that times out
+# isn't cancelled, just detached, so its thread keeps running and keeps
+# querying WMI in the background indefinitely, and under repeated calls
+# (e.g. the user reopening the Devices popup after a slow/empty result)
+# those abandoned queries piled up with NO upper bound — each one an
+# additional concurrent query competing for the same WMI provider host,
+# measured to make subsequent calls even slower. Reusing one small,
+# fixed-size pool across calls caps how many device-inventory queries can
+# ever be in flight at once, without reintroducing the opposite failure
+# mode (a single persistent max_workers=1 worker would mean one
+# truly-stuck call — the exact scenario this timeout/executor design
+# exists to survive — permanently blocks every future call behind it,
+# forever). This closes the unbounded-leak amplifier but, per the note
+# above, doesn't guarantee eliminating the underlying slowness itself.
+_DEVICE_INVENTORY_MAX_CONCURRENT_QUERIES = 3
+_device_inventory_executor = ThreadPoolExecutor(max_workers=_DEVICE_INVENTORY_MAX_CONCURRENT_QUERIES)
 
 
 def _collect_device_inventory() -> DeviceInventory:
@@ -760,17 +792,11 @@ def _collect_device_inventory() -> DeviceInventory:
 def get_device_inventory() -> DeviceInventory:
     """Return currently-connected USB devices, keyboards, and monitors —
     queried fresh every call (see module docstring for why no caching).
-    See _DEVICE_INVENTORY_TIMEOUT_SECONDS above for why this is bounded
-    by a hard timeout rather than calling _collect_device_inventory()
-    directly."""
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(_collect_device_inventory)
+    See _DEVICE_INVENTORY_TIMEOUT_SECONDS and _device_inventory_executor
+    above for why this is bounded by a hard timeout, on a small shared
+    pool, rather than calling _collect_device_inventory() directly."""
+    future = _device_inventory_executor.submit(_collect_device_inventory)
     try:
         return future.result(timeout=_DEVICE_INVENTORY_TIMEOUT_SECONDS)
     except Exception:
         return _EMPTY_DEVICE_INVENTORY
-    finally:
-        # wait=False: never block the response on a call that may itself
-        # be the thing that's hanging — let it finish (or not) in the
-        # background rather than waiting for it here.
-        executor.shutdown(wait=False)
