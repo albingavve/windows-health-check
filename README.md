@@ -18,9 +18,7 @@ why, and surfacing plain-English diagnoses instead of just numbers.
 
 ## Screenshots
 
-*(Add fresh screenshots here — the Process Manager with an expanded browser
-group, the Startup & Services Audit table, and the Diagnostics popup are the
-strongest ones to lead with.)*
+![Process Manager](screenshot_process_manager.png)
 
 ## Features
 
