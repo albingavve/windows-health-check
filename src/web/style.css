@@ -4,6 +4,9 @@
   --text: #e6e8eb;
   --muted: #8b93a1;
   --accent: #4da6ff;
+  --border: #262b35;
+  --enabled: #4dffa0;
+  --disabled: #8b93a1;
 }
 
 * { box-sizing: border-box; }
@@ -56,4 +59,130 @@ h1 { margin: 0; font-size: 1.6rem; }
 
 canvas {
   max-height: 140px;
+}
+
+.panel {
+  padding: 0 32px 32px;
+}
+
+.startup-audit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.startup-audit-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.search-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 8px;
+  min-width: 260px;
+  font-size: 0.9rem;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.muted-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 4px 0 12px;
+}
+
+.table-scroll {
+  max-height: 480px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.startup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.startup-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card-bg);
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.startup-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.startup-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.startup-table .group-row td {
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  padding-top: 12px;
+}
+
+.command-cell {
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.8rem;
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.status-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-badge.is-enabled {
+  color: var(--enabled);
+  background: rgba(77, 255, 160, 0.12);
+}
+
+.status-badge.is-disabled {
+  color: var(--disabled);
+  background: rgba(139, 147, 161, 0.12);
 }

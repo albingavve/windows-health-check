@@ -36,6 +36,37 @@
     </section>
   </main>
 
+  <section class="panel">
+    <div class="card startup-audit">
+      <div class="startup-audit-header">
+        <h2>Startup &amp; Services Audit</h2>
+        <input
+          type="search"
+          id="startup-search"
+          class="search-input"
+          placeholder="Filter by name, source, or command…"
+          autocomplete="off"
+        />
+      </div>
+      <p class="muted-note" id="startup-count"></p>
+      <div class="table-scroll">
+        <table class="startup-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Source</th>
+              <th>Command</th>
+              <th>Enabled</th>
+            </tr>
+          </thead>
+          <tbody id="startup-table-body">
+            <tr><td colspan="4" class="muted-note">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <script src="/assets/app.js"></script>
 </body>
 </html>
