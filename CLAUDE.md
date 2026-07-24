@@ -159,19 +159,19 @@ state, search, sort), Process Manager (grouping/tree view, role labeling,
 search, sort), a collapsible Diagnostics popup ("why is it slow"), a
 collapsible Specs popup (static hardware info), resizable panels, and
 process termination ("End Task") with a hardcoded protected-process list.
-Cyberpunk visual theme applied throughout. Security/privacy audit of the
-repo has been done (no personal data leaked in code, history, or
-fixtures — see git history for details if unsure).
+A Devices popup (connected USB peripherals, keyboards, monitors — built-in
+vs. external) rounds out the hardware picture alongside Specs. Single-
+instance enforcement (a named Windows mutex in `src/main.py`, with a
+port-bind fallback check) plus a `launch.vbs` one-click launcher — see
+"How to run" below — mean the dashboard no longer requires a terminal for
+day-to-day use. Cyberpunk visual theme applied throughout. Security/privacy
+audit of the repo has been done (no personal data leaked in code, history,
+or fixtures — see git history for details if unsure).
 
 **Not yet built:** optimization score/report, top-offenders leaderboard,
 historical trend tracking, disk treemap, Scheduled Tasks audit, bloatware/
 service disable-enable management, correlating startup/service items with
 their live process data.
-
-**Not yet decided:** how to package/launch the app without manually
-running it from a terminal (options discussed: simple launcher script,
-system tray app, native window via pywebview, packaged .exe + auto-start
-— no decision made yet, revisit when the feature set feels done).
 
 ## Roadmap (rough order of work)
 1. ~~System stats collector + endpoint + live gauge dials.~~ Done.
@@ -218,8 +218,14 @@ system tray app, native window via pywebview, packaged .exe + auto-start
     don't build without that discussion happening first.
 17. Optimization score + report, synthesizing the diagnostic engine's
     findings into an overall picture.
-18. Stretch: historical trend tracking, disk treemap, Scheduled Tasks
-    audit, app packaging/launcher (see "Not yet decided" above).
+18. ~~Single-instance enforcement (named Windows mutex + port-bind
+    fallback in `src/main.py`) + `launch.vbs` one-click launcher
+    (background start via `pythonw.exe`, then opens the default
+    browser).~~ Done. Resolves the previously-undecided "how to launch
+    without a terminal" question — see README's "One-click launch"
+    section.
+19. Stretch: historical trend tracking, disk treemap, Scheduled Tasks
+    audit.
 
 ## How to run
 ```

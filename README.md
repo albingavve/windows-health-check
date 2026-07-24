@@ -38,6 +38,20 @@ python -m src.main
 ```
 Then open http://localhost:8000
 
+## One-click launch (no terminal needed)
+Once the dependencies above are installed, you don't need to open a
+terminal to use the dashboard day-to-day: double-click **`launch.vbs`** in
+the project root. It starts the server in the background with no visible
+console window and opens the dashboard in your default browser. It's safe
+to double-click repeatedly — if the dashboard's already running, it just
+opens the browser to it again instead of starting a second copy.
+
+For true one-click access, right-click `launch.vbs` and pin its shortcut
+to the Windows taskbar. Once the dashboard's open in the browser, Firefox's
+**Pin Tab** feature (right-click the tab → *Pin Tab*) is a nice complement:
+it keeps the dashboard's tab anchored on the left of your tab bar so it's
+always a click away, without needing to re-navigate to it.
+
 ## How it works
 - **`src/collectors/system_stats.py`** — pulls live CPU/RAM/disk/network
   stats via `psutil`.

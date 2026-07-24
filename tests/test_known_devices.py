@@ -1,4 +1,4 @@
-from src.collectors.known_devices import lookup_known_device
+from src.collectors.known_devices import lookup_known_device, lookup_vendor_by_id
 
 
 def test_lookup_known_device_matches_lightspeed_and_fills_in_manufacturer():
@@ -43,3 +43,13 @@ def test_lookup_known_device_returns_none_none_for_unmatched():
     category, manufacturer = lookup_known_device("Some Random Peripheral", manufacturer="Some Corp")
     assert category is None
     assert manufacturer is None
+
+
+def test_lookup_vendor_by_id_matches_known_ids_case_insensitively():
+    assert lookup_vendor_by_id("046D") == "Logitech"
+    assert lookup_vendor_by_id("0b05") == "ASUS"
+
+
+def test_lookup_vendor_by_id_returns_none_for_unknown_or_missing_id():
+    assert lookup_vendor_by_id("FFFF") is None
+    assert lookup_vendor_by_id(None) is None

@@ -458,18 +458,6 @@ function buildDeviceSection(title, items, renderItem) {
   return section;
 }
 
-function buildDeviceRow(name, meta) {
-  const nameEl = document.createElement("span");
-  nameEl.className = "device-name";
-  nameEl.textContent = name;
-
-  const metaEl = document.createElement("span");
-  metaEl.className = "device-meta";
-  metaEl.textContent = meta || "";
-
-  return [nameEl, metaEl];
-}
-
 function buildBuiltInTag() {
   // Used where "built-in" is only ever a best-effort positive signal
   // (webcams, via LocationInformation) — never shown as "External" here,
@@ -537,17 +525,25 @@ function renderKeyboard(li, keyboard) {
 }
 
 function renderMonitor(li, monitor) {
-  // Built-in panels are labeled outright rather than shown with their
-  // manufacturer/model — those EDID strings ("BOE NE156FHM-NX6") aren't
-  // meaningful to most users the way "Built-in Laptop Screen" is.
-  // External monitors are unaffected and keep showing manufacturer/model.
-  // monitor.is_built_in === null (Display Config API unavailable) falls
-  // back to the same manufacturer/model display as a known-external one,
-  // since nothing here was actually confirmed either way.
-  const name = monitor.is_built_in
-    ? "Built-in Laptop Screen"
-    : [monitor.manufacturer, monitor.model].filter(Boolean).join(" ") || "Unknown display";
-  for (const el of buildDeviceRow(name, monitor.resolution)) li.appendChild(el);
+  // Same badge/tag convention as renderKeyboard() above: the name always
+  // shows manufacturer/model, with a "Built-in"/"External" tag alongside
+  // it rather than replacing the name text. monitor.is_built_in === null
+  // (Display Config API unavailable) omits the tag entirely, since
+  // nothing here was actually confirmed either way.
+  const name = [monitor.manufacturer, monitor.model].filter(Boolean).join(" ") || "Unknown display";
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "device-name";
+  nameEl.appendChild(document.createTextNode(name));
+  if (monitor.is_built_in !== null) {
+    nameEl.appendChild(buildBuiltInStateBadge(monitor.is_built_in));
+  }
+  li.appendChild(nameEl);
+
+  const metaEl = document.createElement("span");
+  metaEl.className = "device-meta";
+  metaEl.textContent = monitor.resolution || "";
+  li.appendChild(metaEl);
 }
 
 function buildGenericUsbSection(items) {

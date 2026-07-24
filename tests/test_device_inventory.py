@@ -3,11 +3,14 @@ from unittest.mock import MagicMock, patch
 from src.collectors.device_inventory import (
     _DISPLAYCONFIG_PATH_INFO,
     _RawPnpEntity,
+    UsbDevice,
     _decode_edid_string,
     _extract_hardware_id,
+    _extract_vid,
     _get_builtin_display_hardware_ids,
     _group_usb_devices,
     _hardware_id_from_monitor_device_path,
+    _index_usb_devices_by_hardware_key,
     _is_generic_plumbing,
     _pnp_grouping_key,
     _query_keyboards,
@@ -170,6 +173,23 @@ def test_pnp_grouping_key_works_for_acpi_ids_too():
     assert _pnp_grouping_key(r"ACPI\MSFT0003\0") == "MSFT0003"
 
 
+def test_pnp_grouping_key_collapses_non_mi_composite_suffixes_too():
+    # Real bug found on this project's own dev machine: a Logitech
+    # LIGHTSPEED receiver's extra "Lamp Array" RGB interfaces enumerate
+    # with a "&LAMPARRAY" suffix, not "&MI_XX" — the old MI_-only stripping
+    # logic left this suffix untouched, so these rows grouped under a
+    # different key than the receiver's own row and it showed up twice in
+    # the Devices popup.
+    key_a = _pnp_grouping_key(r"USB\VID_046D&PID_C54D\3957336F3135")
+    key_b = _pnp_grouping_key(r"USB\VID_046D&PID_C54D&LAMPARRAY\6&20CA14AB&0&3957336F3135_SLOT00")
+    assert key_a == key_b == "VID_046D&PID_C54D"
+
+
+def test_extract_vid_pulls_the_vendor_id_out_of_a_hardware_key():
+    assert _extract_vid("VID_046D&PID_C54D") == "046D"
+    assert _extract_vid("MSFT0003") is None
+
+
 def test_group_usb_devices_collapses_seven_sibling_interfaces_into_one_entry():
     # Matches the real-world case this feature was built for: a Logitech
     # LIGHTSPEED receiver enumerating as 7 Win32_PnPEntity rows, all named
@@ -193,6 +213,40 @@ def test_group_usb_devices_collapses_seven_sibling_interfaces_into_one_entry():
     assert device.manufacturer == "Logitech"
     assert device.category == "Wireless Mouse/Keyboard Receiver"
     assert device.is_generic is False
+
+
+def test_group_usb_devices_collapses_lightspeed_receiver_lamparray_interfaces():
+    # Real-shaped DeviceIDs captured from this project's own dev machine
+    # while investigating a duplicate "LIGHTSPEED Receiver" entry: the
+    # receiver's base row has no MI_/LAMPARRAY suffix at all, while its
+    # seven RGB "Lamp Array" interfaces all share a "&LAMPARRAY" suffix
+    # instead of the usual "&MI_XX" one. Before the _pnp_grouping_key fix,
+    # these grouped separately and produced two "LIGHTSPEED Receiver" rows
+    # for one physical device.
+    raw = [
+        _RawPnpEntity(
+            name="LIGHTSPEED Receiver",
+            manufacturer="Logitech",
+            device_id=r"USB\VID_046D&PID_C54D\3957336F3135",
+        ),
+        *[
+            _RawPnpEntity(
+                name="LIGHTSPEED Receiver",
+                manufacturer=None,
+                device_id=rf"USB\VID_046D&PID_C54D&LAMPARRAY\6&20CA14AB&0&3957336F3135_SLOT0{i}",
+            )
+            for i in range(7)
+        ],
+    ]
+
+    devices = _group_usb_devices(raw)
+
+    assert len(devices) == 1
+    device = devices[0]
+    assert device.interface_count == 8
+    assert device.name == "LIGHTSPEED Receiver"
+    assert device.manufacturer == "Logitech"
+    assert device.category == "Wireless Mouse/Keyboard Receiver"
 
 
 def test_group_usb_devices_does_not_merge_unrelated_devices_sharing_a_generic_name():
@@ -280,7 +334,7 @@ def test_query_keyboards_uses_pnpclass_keyboard_filter():
     connection = MagicMock()
     connection.query.return_value = []
 
-    result = _query_keyboards(connection)
+    result = _query_keyboards(connection, {})
 
     assert result == []
     connection.query.assert_called_once()
@@ -299,7 +353,7 @@ def test_query_keyboards_labels_acpi_device_as_built_in():
         )
     ]
 
-    keyboards = _query_keyboards(connection)
+    keyboards = _query_keyboards(connection, {})
 
     assert len(keyboards) == 1
     assert keyboards[0].name == "Standard PS/2 Keyboard"
@@ -320,7 +374,7 @@ def test_query_keyboards_labels_hid_and_usb_devices_as_external():
         )
     ]
 
-    keyboards = _query_keyboards(connection)
+    keyboards = _query_keyboards(connection, {})
 
     assert len(keyboards) == 1
     assert keyboards[0].is_built_in is False
@@ -341,7 +395,7 @@ def test_query_keyboards_groups_sibling_interfaces_of_one_external_keyboard():
         ),
     ]
 
-    keyboards = _query_keyboards(connection)
+    keyboards = _query_keyboards(connection, {})
 
     assert len(keyboards) == 1
     assert keyboards[0].is_built_in is False
@@ -351,7 +405,89 @@ def test_query_keyboards_degrades_to_empty_list_on_query_failure():
     connection = MagicMock()
     connection.query.side_effect = Exception("WMI query failed")
 
-    assert _query_keyboards(connection) == []
+    assert _query_keyboards(connection, {}) == []
+
+
+# --- keyboard/USB cross-referencing (a receiver's spare keyboard-capable
+# interface shouldn't be double-counted as its own keyboard entry) ---
+
+
+def test_query_keyboards_does_not_double_list_a_receivers_keyboard_capable_interface():
+    # Real-world case this feature was built for: a Logitech LIGHTSPEED
+    # receiver only paired to a mouse still exposes a keyboard-capable HID
+    # interface, which showed up as an indistinguishable second
+    # "HID Keyboard Device (EXTERNAL)" row alongside the user's actual
+    # external keyboard. Since the receiver is already identified and
+    # listed once in the USB section, its keyboard interface should be
+    # dropped here rather than double-listed.
+    usb_devices_by_key = {
+        "VID_046D&PID_C54D": UsbDevice(
+            name="LIGHTSPEED Receiver",
+            manufacturer="Logitech",
+            category="Wireless Mouse/Keyboard Receiver",
+            interface_count=3,
+            is_generic=False,
+            is_built_in=None,
+        )
+    }
+    connection = MagicMock()
+    connection.query.return_value = [
+        _fake_pnp_entity(
+            name="HID Keyboard Device",
+            manufacturer="(Standard keyboards)",
+            device_id=r"HID\VID_046D&PID_C54D&MI_01&COL01\7&2D956586&0&0000",
+        )
+    ]
+
+    keyboards = _query_keyboards(connection, usb_devices_by_key)
+
+    assert keyboards == []
+
+
+def test_query_keyboards_still_lists_an_unidentified_keyboard_sharing_a_vendor_with_a_generic_usb_entry():
+    # A real external keyboard's own USB-bus wrapper row is often generic
+    # and unrecognized by known_devices.py (e.g. "USB Composite Device"),
+    # so it must NOT be suppressed the way an already-identified device's
+    # spare interface is — but it should still get a better manufacturer
+    # than the bare "(Standard keyboards)" placeholder via the vendor-ID
+    # lookup, so it reads as something more useful than a second
+    # indistinguishable "HID Keyboard Device".
+    usb_devices_by_key = {
+        "VID_0B05&PID_1A83": UsbDevice(
+            name="USB Composite Device",
+            manufacturer="(Standard USB Host Controller)",
+            category=None,
+            interface_count=4,
+            is_generic=True,
+            is_built_in=None,
+        )
+    }
+    connection = MagicMock()
+    connection.query.return_value = [
+        _fake_pnp_entity(
+            name="HID Keyboard Device",
+            manufacturer="(Standard keyboards)",
+            device_id=r"HID\VID_0B05&PID_1A83&MI_00\7&303C4C75&0&0000",
+        )
+    ]
+
+    keyboards = _query_keyboards(connection, usb_devices_by_key)
+
+    assert len(keyboards) == 1
+    assert keyboards[0].manufacturer == "ASUS"
+
+
+def test_index_usb_devices_by_hardware_key_maps_grouping_key_to_its_device():
+    raw = [
+        _RawPnpEntity(
+            name="LIGHTSPEED Receiver", manufacturer="Logitech", device_id=r"USB\VID_046D&PID_C54D\3957336F3135"
+        ),
+    ]
+    devices = _group_usb_devices(raw)
+
+    index = _index_usb_devices_by_hardware_key(raw, devices)
+
+    assert index == {"VID_046D&PID_C54D": devices[0]}
 
 
 # --- monitors: built-in panel detection via Display Config API ---

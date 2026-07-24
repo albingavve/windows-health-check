@@ -17,6 +17,7 @@ and the Win32 Display Config API can be unavailable on some configs.
 """
 
 import ctypes
+import re
 import winreg
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -29,7 +30,7 @@ import win32api
 import win32con
 import wmi
 
-from src.collectors.known_devices import lookup_known_device
+from src.collectors.known_devices import lookup_known_device, lookup_vendor_by_id
 
 
 @dataclass
@@ -143,6 +144,10 @@ def _query_pnp_entities(connection: "wmi.WMI", where_clause: str) -> list[_RawPn
     return raw
 
 
+_VID_PID_PATTERN = re.compile(r"VID_[0-9A-F]{4}&PID_[0-9A-F]{4}", re.IGNORECASE)
+_VID_PATTERN = re.compile(r"VID_([0-9A-F]{4})", re.IGNORECASE)
+
+
 def _pnp_grouping_key(device_id: str) -> str:
     """Extract a grouping key identifying the *physical device* behind a
     PNP DeviceID, rather than one specific logical interface.
@@ -150,26 +155,48 @@ def _pnp_grouping_key(device_id: str) -> str:
     A composite device (e.g. a wireless receiver that exposes several HID
     collections) enumerates as multiple Win32_PnPEntity rows that share
     the same enumerator + vendor/product ID but each add their own
-    "&MI_XX" interface-index suffix and their own unique instance ID after
-    the second backslash — e.g. "USB\\VID_046D&PID_405E&MI_00\\6&2d...0"
-    and "USB\\VID_046D&PID_405E&MI_02\\6&2d...2" are two interfaces of the
-    very same physical receiver. Stripping the "&MI_XX" suffix from the
-    hardware-ID segment (and ignoring the instance-ID segment entirely)
-    collapses these back to one shared key ("VID_046D&PID_405E") without
-    guessing based on display name — matching on name alone would
-    incorrectly merge unrelated devices that share a generic name like
-    "USB Input Device". Works the same way for ACPI\\... device IDs (used
-    for built-in keyboards), which share the same backslash-segmented
-    structure.
+    interface-index suffix and their own unique instance ID after the
+    second backslash — e.g. "USB\\VID_046D&PID_405E&MI_00\\6&2d...0" and
+    "USB\\VID_046D&PID_405E&MI_02\\6&2d...2" are two interfaces of the
+    very same physical receiver. Matching the leading "VID_xxxx&PID_xxxx"
+    prefix of the hardware-ID segment (and ignoring everything after it,
+    plus the instance-ID segment entirely) collapses these back to one
+    shared key ("VID_046D&PID_405E") without guessing based on display
+    name — matching on name alone would incorrectly merge unrelated
+    devices that share a generic name like "USB Input Device".
+
+    Originally this only stripped a literal "&MI_XX" suffix, which missed
+    other real composite-interface suffixes — confirmed on this project's
+    own dev machine, where a Logitech LIGHTSPEED receiver's extra "Lamp
+    Array" RGB-lighting interfaces enumerate as
+    "USB\\VID_046D&PID_C54D&LAMPARRAY\\...", not "&MI_XX". That suffix
+    survived the old stripping logic untouched, so those rows grouped
+    under a different key than the receiver's own
+    "USB\\VID_046D&PID_C54D\\..." row and the receiver showed up twice.
+    Matching on the VID/PID prefix instead of stripping a specific known
+    suffix handles that case and any other composite-interface suffix
+    Windows uses (e.g. "&COL01") without needing to enumerate them all.
+
+    Devices with no VID/PID in their hardware ID (e.g. "ACPI\\MSFT0003\\0",
+    used for built-in keyboards) fall back to the full hardware-ID segment
+    unchanged, same as before.
     """
     parts = device_id.split("\\")
     if len(parts) < 2:
         return device_id
     hardware_id = parts[1]
-    mi_index = hardware_id.upper().find("&MI_")
-    if mi_index != -1:
-        hardware_id = hardware_id[:mi_index]
+    match = _VID_PID_PATTERN.match(hardware_id)
+    if match:
+        return match.group(0).upper()
     return hardware_id
+
+
+def _extract_vid(hardware_key: str) -> str | None:
+    """Pull the 4-hex-digit vendor ID out of a grouping key/hardware ID
+    (e.g. "VID_046D&PID_C54D" -> "046D"), for known_devices.py's
+    vendor-ID lookup. None when there isn't one (e.g. an ACPI device)."""
+    match = _VID_PATTERN.search(hardware_key)
+    return match.group(1).upper() if match else None
 
 
 # Name patterns that unambiguously identify generic bus/hub/controller
@@ -184,6 +211,15 @@ def _looks_like_generic_name(name: str) -> bool:
     return any(pattern in name_lower for pattern in _GENERIC_USB_NAME_PATTERNS)
 
 
+def _is_placeholder_manufacturer(manufacturer: str | None) -> bool:
+    """True for Windows' own placeholder manufacturer strings for an
+    inbox/generic-class driver (e.g. "(Standard keyboards)",
+    "(Standard system devices)") — a reliable "this isn't the real vendor"
+    signal, unlike a simply-missing manufacturer, which isn't strong
+    enough on its own to justify hiding or overriding anything."""
+    return bool(manufacturer) and manufacturer.startswith("(Standard")
+
+
 def _is_generic_plumbing(name: str, manufacturer: str | None) -> bool:
     """True for generic USB infrastructure (hubs, root routers, composite-
     device wrapper entries, bare unlabeled input devices) that belongs in
@@ -192,11 +228,7 @@ def _is_generic_plumbing(name: str, manufacturer: str | None) -> bool:
     already recognize — a known match always wins."""
     if _looks_like_generic_name(name):
         return True
-    # "(Standard ...)" is Windows' own placeholder for an inbox/generic-
-    # class driver with no specific hardware vendor — a reliable signal,
-    # unlike a simply-missing manufacturer, which isn't strong enough on
-    # its own to justify hiding a device that might still be real.
-    if manufacturer and manufacturer.startswith("(Standard"):
+    if _is_placeholder_manufacturer(manufacturer):
         return True
     return False
 
@@ -299,22 +331,49 @@ def _group_usb_devices(raw_entities: list[_RawPnpEntity]) -> list[UsbDevice]:
     return devices
 
 
-def _query_usb_devices(connection: "wmi.WMI") -> list[UsbDevice]:
-    """Connected USB Plug-and-Play devices, collapsed from one row per
-    logical interface to one entry per physical device (see
-    _group_usb_devices) and categorized via known_devices.py.
+def _index_usb_devices_by_hardware_key(
+    raw_entities: list[_RawPnpEntity], usb_devices: list[UsbDevice]
+) -> dict[str, UsbDevice]:
+    """Map each already-built UsbDevice back to its grouping key (see
+    _pnp_grouping_key), so _query_keyboards can recognize when a
+    keyboard-capable HID interface actually belongs to a device already
+    listed in the USB section — e.g. a Logitech LIGHTSPEED receiver
+    commonly exposes a keyboard-capable HID interface even when only a
+    mouse is paired to it — instead of double-listing that same physical
+    device as a second, generic "HID Keyboard Device" entry.
 
-    Deliberately does NOT attempt to report USB-A vs USB-C port type:
-    Windows doesn't reliably expose physical connector type through
-    Win32_PnPEntity (or any standard device API) — the device's own
-    DeviceID/PNP class describes what it *is*, not which port shape it's
-    plugged into — so this is omitted entirely rather than guessed at.
+    `usb_devices` must be `_group_usb_devices(raw_entities)`'s own return
+    value for the same `raw_entities` — the two are matched up positionally
+    by re-running the same grouping (cheap: at most a few dozen rows).
     """
-    raw = _query_pnp_entities(connection, "DeviceID LIKE 'USB%'")
-    return _group_usb_devices(raw)
+    groups = _group_pnp_entities_by_hardware_id(raw_entities)
+    return {_pnp_grouping_key(group[0].device_id): device for group, device in zip(groups, usb_devices)}
 
 
-def _query_keyboards(connection: "wmi.WMI") -> list[Keyboard]:
+def _resolve_keyboard_manufacturer(
+    raw_manufacturer: str | None, hardware_key: str, matched_usb_device: UsbDevice | None
+) -> str | None:
+    """Best-effort real manufacturer for a keyboard entry, preferring a
+    more specific identity than Windows' own generic placeholder strings
+    (e.g. "(Standard keyboards)") when one can be found — first from a
+    matched USB device's own already-resolved manufacturer (e.g. "Logitech"
+    for a LIGHTSPEED receiver), then a vendor-ID-prefix lookup
+    (known_devices.lookup_vendor_by_id, e.g. "0B05" -> "ASUS"), falling
+    back to whatever Windows itself reported rather than fabricating
+    anything."""
+    if (
+        matched_usb_device is not None
+        and matched_usb_device.manufacturer
+        and not _is_placeholder_manufacturer(matched_usb_device.manufacturer)
+    ):
+        return matched_usb_device.manufacturer
+    vendor_override = lookup_vendor_by_id(_extract_vid(hardware_key))
+    if vendor_override:
+        return vendor_override
+    return raw_manufacturer
+
+
+def _query_keyboards(connection: "wmi.WMI", usb_devices_by_key: dict[str, UsbDevice]) -> list[Keyboard]:
     """Keyboards, both built-in and external, identified via WMI's
     PNPClass='Keyboard' — a separate, targeted query from the USB-only one
     above, because a USB/wireless keyboard's actual keyboard-identifying
@@ -328,13 +387,34 @@ def _query_keyboards(connection: "wmi.WMI") -> list[Keyboard]:
     is_built_in is decided purely by DeviceID enumerator: "ACPI\\" means
     the laptop's own internal bus; anything else ("USB\\", "HID\\") means
     it was plugged in.
+
+    `usb_devices_by_key` (see _index_usb_devices_by_hardware_key) lets a
+    keyboard-capable HID interface be recognized as belonging to a device
+    already listed in the USB section — a Logitech LIGHTSPEED receiver in
+    particular commonly exposes one even when only a mouse is paired to
+    it, which otherwise shows up as an indistinguishable second "HID
+    Keyboard Device" entry alongside a real external keyboard. When that
+    happens the interface is attributed back to the matched device instead
+    of listed a second time; an unrecognized keyboard sharing a vendor ID
+    with a plain (uncategorized) USB entry is still listed, just with a
+    best-effort vendor-derived manufacturer (see
+    _resolve_keyboard_manufacturer) instead of a bare generic one.
     """
     raw = _query_pnp_entities(connection, "PNPClass='Keyboard'")
 
     keyboards: list[Keyboard] = []
     for members in _group_pnp_entities_by_hardware_id(raw):
         representative = _pick_representative_member(members)
-        manufacturer = representative.manufacturer or next((m.manufacturer for m in members if m.manufacturer), None)
+        hardware_key = _pnp_grouping_key(representative.device_id)
+        matched_usb_device = usb_devices_by_key.get(hardware_key)
+
+        # Already shown once as its identified USB device (e.g. the
+        # LIGHTSPEED receiver itself) — don't list this interface again.
+        if matched_usb_device is not None and matched_usb_device.category is not None:
+            continue
+
+        raw_manufacturer = representative.manufacturer or next((m.manufacturer for m in members if m.manufacturer), None)
+        manufacturer = _resolve_keyboard_manufacturer(raw_manufacturer, hardware_key, matched_usb_device)
         is_built_in = representative.device_id.upper().startswith("ACPI\\")
         keyboards.append(Keyboard(name=representative.name, manufacturer=manufacturer, is_built_in=is_built_in))
     return keyboards
@@ -652,8 +732,16 @@ def _collect_device_inventory() -> DeviceInventory:
     try:
         with _com_initialized():
             connection = wmi.WMI()
-            usb_devices = _query_usb_devices(connection)
-            keyboards = _query_keyboards(connection)
+            # Deliberately does NOT attempt to report USB-A vs USB-C port
+            # type: Windows doesn't reliably expose physical connector type
+            # through Win32_PnPEntity (or any standard device API) — the
+            # device's own DeviceID/PNP class describes what it *is*, not
+            # which port shape it's plugged into — so this is omitted
+            # entirely rather than guessed at.
+            usb_raw_entities = _query_pnp_entities(connection, "DeviceID LIKE 'USB%'")
+            usb_devices = _group_usb_devices(usb_raw_entities)
+            usb_devices_by_key = _index_usb_devices_by_hardware_key(usb_raw_entities, usb_devices)
+            keyboards = _query_keyboards(connection, usb_devices_by_key)
 
             try:
                 wmi_namespace_connection = wmi.WMI(namespace="wmi")

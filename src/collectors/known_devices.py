@@ -63,3 +63,28 @@ def lookup_known_device(name: str, manufacturer: str | None = None) -> tuple[str
             continue
         return entry["category"], entry.get("manufacturer")
     return None, None
+
+
+# USB vendor-ID (the 4 hex digits after "VID_" in a PNP hardware ID) to
+# manufacturer name, for devices/interfaces that don't carry a usable name
+# or manufacturer string of their own — notably a HID keyboard interface,
+# which Windows commonly reports only as a bare "HID Keyboard Device" with
+# manufacturer "(Standard keyboards)", giving device_inventory.py no way to
+# tell two such entries apart. Deliberately tiny and hand-curated, same
+# spirit as KNOWN_DEVICES above: only IDs actually seen and confirmed, never
+# a large scraped vendor-ID database.
+KNOWN_VENDOR_IDS: dict[str, str] = {
+    "046D": "Logitech",
+    "0B05": "ASUS",
+}
+
+
+def lookup_vendor_by_id(vendor_id: str | None) -> str | None:
+    """Look up a manufacturer name from a USB vendor ID (e.g. "046D").
+
+    Returns None when the ID is missing or unrecognized, rather than
+    guessing — same honesty guarantee as lookup_known_device() above.
+    """
+    if not vendor_id:
+        return None
+    return KNOWN_VENDOR_IDS.get(vendor_id.upper())
