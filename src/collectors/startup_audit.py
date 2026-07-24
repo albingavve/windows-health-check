@@ -39,6 +39,11 @@ class StartupItem:
     source: StartupSource
     command: str
     enabled: bool
+    # True when the command's executable path was resolved and no longer
+    # exists on disk — a leftover registry entry from an uninstalled
+    # program. Only computed for registry Run/RunOnce entries so far (see
+    # _is_orphaned()); always False for other sources.
+    is_orphaned: bool = False
     # Filled in once we have the bloatware/telemetry lookup table (roadmap step 3)
     known_description: str | None = None
     estimated_impact: str | None = None  # e.g. "low" / "medium" / "high"
@@ -112,8 +117,93 @@ def _scan_startup_folder(folder: Path) -> list[StartupItem]:
     return items
 
 
+def _extract_executable_path(command: str) -> str | None:
+    """Best-effort extraction of the executable path from a Run-key command
+    string — handles a quoted path (`"C:\\...\\app.exe" --flag`) and a bare
+    unquoted path followed by arguments (`C:\\...\\app.exe --flag`) alike.
+
+    Returns None for a blank command; callers should skip the orphaned-path
+    check entirely in that case rather than guess at a path.
+    """
+    command = command.strip()
+    if not command:
+        return None
+
+    if command.startswith('"'):
+        end_quote = command.find('"', 1)
+        if end_quote != -1:
+            return command[1:end_quote]
+        return command[1:]  # unterminated quote — best effort on the rest
+
+    return command.split(" ", 1)[0]
+
+
+def _is_orphaned(command: str) -> bool:
+    """Return True if `command`'s executable path was resolved and
+    definitively does not exist on disk.
+
+    Only absolute paths are checked. A bare filename (e.g. "rundll32.exe")
+    could still resolve via the system PATH, and guessing wrong there would
+    falsely flag a perfectly valid entry as orphaned — worse than not
+    flagging it at all — so those are left unflagged rather than guessed at,
+    matching known_software.py's "don't fabricate" approach.
+    """
+    path = _extract_executable_path(command)
+    if not path:
+        return False
+
+    candidate = Path(os.path.expandvars(path))
+    if not candidate.is_absolute():
+        return False
+
+    return not candidate.exists()
+
+
+# StartupApproved's binary format is undocumented by Microsoft — this is
+# community reverse-engineering (relied on by tools like Sysinternals
+# Autoruns) rather than an official API, the same caveat as the
+# NtQuerySystemInformation approach considered (and deferred) for
+# process_list.py. Consistently observed across Windows 10/11: a 12-byte
+# value per Run entry name, where the first byte is 0x02 or 0x06 when
+# enabled, and 0x03 (followed by an 8-byte FILETIME of when it was
+# disabled) when the user disabled it via Task Manager's Startup tab.
+_STARTUP_APPROVED_ENABLED_FIRST_BYTES = {0x02, 0x06}
+_STARTUP_APPROVED_SUBKEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+
+
+def _read_startup_approved_enabled(hive: int, name: str) -> bool | None:
+    """Return the true enabled state for a Run-key entry per
+    StartupApproved\\Run, or None if no override is recorded there.
+
+    Task Manager's "Disable" button on the Startup tab doesn't remove the
+    original Run value — it writes a suppression flag here instead, which
+    is why `enabled` can't just mean "the Run key entry exists". An absent
+    override means the entry has never been touched and is enabled by
+    default.
+    """
+    try:
+        key = winreg.OpenKey(hive, _STARTUP_APPROVED_SUBKEY, 0, winreg.KEY_READ)
+    except FileNotFoundError:
+        return None
+
+    with key:
+        try:
+            data, _value_type = winreg.QueryValueEx(key, name)
+        except FileNotFoundError:
+            return None
+
+    if not data:
+        return None
+    return data[0] in _STARTUP_APPROVED_ENABLED_FIRST_BYTES
+
+
 def _scan_registry_run_keys() -> list[StartupItem]:
-    """Return startup items from the registry Run/RunOnce keys (HKCU + HKLM)."""
+    """Return startup items from the registry Run/RunOnce keys (HKCU + HKLM).
+
+    `enabled` reflects StartupApproved's suppression flag where one exists
+    for "Run" keys (RunOnce entries aren't managed by Task Manager's
+    Startup tab, so there's no corresponding override to check).
+    """
     items: list[StartupItem] = []
 
     for hive, subkey in _REGISTRY_RUN_KEYS:
@@ -122,6 +212,8 @@ def _scan_registry_run_keys() -> list[StartupItem]:
         except FileNotFoundError:
             continue
 
+        is_run_key = subkey.endswith("\\Run")  # excludes "...\RunOnce"
+
         with key:
             index = 0
             while True:
@@ -129,12 +221,20 @@ def _scan_registry_run_keys() -> list[StartupItem]:
                     name, command, _value_type = winreg.EnumValue(key, index)
                 except OSError:
                     break
+
+                enabled = True
+                if is_run_key:
+                    approved_state = _read_startup_approved_enabled(hive, name)
+                    if approved_state is not None:
+                        enabled = approved_state
+
                 items.append(
                     StartupItem(
                         name=name,
                         source=StartupSource.REGISTRY_RUN,
                         command=command,
-                        enabled=True,
+                        enabled=enabled,
+                        is_orphaned=_is_orphaned(command),
                     )
                 )
                 index += 1
@@ -170,9 +270,18 @@ def _scan_services() -> list[StartupItem]:
 
 def _apply_known_software(items: list[StartupItem]) -> list[StartupItem]:
     """Fill in known_description/estimated_impact for items that match the
-    known-software lookup table; unmatched items are left as None."""
+    known-software lookup table; unmatched items are left as None.
+
+    An orphaned item isn't actually running, so any known-software impact
+    rating no longer reflects a real resource cost — cleared back to None
+    regardless of what the lookup table says. known_description is left
+    alone here; the frontend already prioritizes the "appears to be
+    uninstalled" message over it for orphaned items.
+    """
     for item in items:
         item.known_description, item.estimated_impact = lookup_known_software(item.name, item.command)
+        if item.is_orphaned:
+            item.estimated_impact = None
     return items
 
 

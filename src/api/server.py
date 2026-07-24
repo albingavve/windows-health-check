@@ -1,16 +1,53 @@
 """FastAPI app. Routes are kept thin: call a collector, shape the response."""
 
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from src.collectors.process_list import get_process_list, group_processes
+from src.collectors.diagnostics import diagnose_system
+from src.collectors.process_list import ProcessGroup, get_process_list, group_processes
 from src.collectors.startup_audit import get_startup_items
-from src.collectors.system_stats import get_system_snapshot
+from src.collectors.system_stats import SystemSnapshot, get_system_snapshot
 
 app = FastAPI(title="PC Health Dashboard")
+
+# The frontend polls /api/stats, /api/processes, and /api/diagnostics on the
+# same ~2s interval. Diagnostics is pure analysis over the other two
+# collectors' output (see diagnostics.py), so without this cache every
+# diagnostics poll would silently double the cost of process enumeration
+# (~1s for ~285 processes) and the CPU snapshot's blocking read — exactly
+# the kind of self-inflicted polling overhead CLAUDE.md warns against for a
+# PC-health tool. A cache slightly shorter than the poll interval means
+# whichever endpoint is hit first each cycle pays for a fresh reading and
+# the others reuse it.
+_CACHE_TTL_SECONDS = 1.8
+
+_stats_cache: SystemSnapshot | None = None
+_stats_cache_at: float = 0.0
+_groups_cache: list[ProcessGroup] = []
+_groups_cache_at: float = 0.0
+
+
+def _get_cached_stats() -> SystemSnapshot:
+    global _stats_cache, _stats_cache_at
+    now = time.monotonic()
+    if _stats_cache is None or now - _stats_cache_at > _CACHE_TTL_SECONDS:
+        _stats_cache = get_system_snapshot()
+        _stats_cache_at = now
+    return _stats_cache
+
+
+def _get_cached_groups() -> list[ProcessGroup]:
+    global _groups_cache, _groups_cache_at
+    now = time.monotonic()
+    if now - _groups_cache_at > _CACHE_TTL_SECONDS:
+        _groups_cache = group_processes(get_process_list())
+        _groups_cache_at = now
+    return _groups_cache
+
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -32,8 +69,7 @@ async def no_cache_static_assets(request: Request, call_next):
 @app.get("/api/stats")
 def read_stats() -> dict:
     """Current point-in-time system stats."""
-    snapshot = get_system_snapshot()
-    return snapshot.to_dict()
+    return _get_cached_stats().to_dict()
 
 
 @app.get("/api/startup")
@@ -47,7 +83,15 @@ def read_processes() -> list[dict]:
     """Running processes grouped by parent-child ancestry (falling back to
     shared executable name), each with summed CPU%/memory and its member
     processes for expansion — see process_list.group_processes()."""
-    return [group.to_dict() for group in group_processes(get_process_list())]
+    return [group.to_dict() for group in _get_cached_groups()]
+
+
+@app.get("/api/diagnostics")
+def read_diagnostics() -> list[dict]:
+    """Rules-based "why is it slow" findings over the current stats/process
+    data — see diagnostics.diagnose_system(). Empty list means nothing
+    crossed a threshold, not that the check failed."""
+    return [diagnosis.to_dict() for diagnosis in diagnose_system(_get_cached_stats(), _get_cached_groups())]
 
 
 # Serve the frontend. Mounted after the API routes so /api/* takes priority.

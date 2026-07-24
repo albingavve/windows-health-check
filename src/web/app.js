@@ -178,6 +178,183 @@ async function pollStats() {
 pollStats();
 setInterval(pollStats, 2000);
 
+function buildDiagnosisCard(diagnosis) {
+  const card = document.createElement("div");
+  card.className = `diagnosis-card severity-${diagnosis.severity}`;
+
+  const summary = document.createElement("p");
+  summary.className = "diagnosis-summary";
+  const dot = document.createElement("span");
+  dot.className = "severity-dot";
+  summary.appendChild(dot);
+  summary.appendChild(document.createTextNode(diagnosis.summary));
+  card.appendChild(summary);
+
+  const details = document.createElement("details");
+  details.className = "diagnosis-evidence";
+  const detailsSummary = document.createElement("summary");
+  detailsSummary.textContent = "Evidence";
+  details.appendChild(detailsSummary);
+
+  const dl = document.createElement("dl");
+  for (const [key, value] of Object.entries(diagnosis.evidence)) {
+    const dt = document.createElement("dt");
+    dt.textContent = key.replace(/_/g, " ");
+    dl.appendChild(dt);
+
+    const dd = document.createElement("dd");
+    dd.textContent = Array.isArray(value) || (value && typeof value === "object") ? JSON.stringify(value) : String(value);
+    dl.appendChild(dd);
+  }
+  details.appendChild(dl);
+  card.appendChild(details);
+
+  return card;
+}
+
+function renderDiagnostics(diagnoses) {
+  const container = document.getElementById("diagnostics-list");
+  container.innerHTML = "";
+
+  if (diagnoses.length === 0) {
+    const p = document.createElement("p");
+    p.className = "diagnostics-empty";
+    p.textContent = "Nothing unusual detected — CPU, memory, and disk activity all look normal right now.";
+    container.appendChild(p);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const diagnosis of diagnoses) {
+    fragment.appendChild(buildDiagnosisCard(diagnosis));
+  }
+  container.appendChild(fragment);
+}
+
+function updateDiagnosticsIndicator(diagnoses) {
+  const dot = document.getElementById("diagnostics-indicator-dot");
+  const hasWarning = diagnoses.some((d) => d.severity === "warning");
+  const hasFinding = diagnoses.length > 0;
+
+  dot.classList.remove("dot-neutral", "dot-info", "dot-warning");
+  if (hasWarning) {
+    dot.classList.add("dot-warning");
+  } else if (hasFinding) {
+    dot.classList.add("dot-info");
+  } else {
+    dot.classList.add("dot-neutral");
+  }
+}
+
+async function pollDiagnostics() {
+  const container = document.getElementById("diagnostics-list");
+  try {
+    const res = await fetch("/api/diagnostics");
+    const diagnoses = await res.json();
+    // Rendered into the popup and the indicator's badge dot every poll
+    // regardless of whether the popup is currently expanded, so the badge
+    // stays current even while collapsed.
+    renderDiagnostics(diagnoses);
+    updateDiagnosticsIndicator(diagnoses);
+  } catch (err) {
+    console.error("Failed to fetch diagnostics:", err);
+    container.innerHTML = '<p class="muted-note">Failed to load diagnostics.</p>';
+  }
+}
+
+pollDiagnostics();
+setInterval(pollDiagnostics, 2000);
+
+const diagnosticsIndicator = document.getElementById("diagnostics-indicator");
+const diagnosticsPopup = document.getElementById("diagnostics-popup");
+const diagnosticsClose = document.getElementById("diagnostics-close");
+
+function setDiagnosticsExpanded(expanded) {
+  diagnosticsPopup.hidden = !expanded;
+  diagnosticsIndicator.setAttribute("aria-expanded", String(expanded));
+  diagnosticsIndicator.classList.toggle("is-expanded", expanded);
+}
+
+diagnosticsIndicator.addEventListener("click", () => {
+  setDiagnosticsExpanded(diagnosticsPopup.hidden);
+});
+
+diagnosticsIndicator.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    setDiagnosticsExpanded(diagnosticsPopup.hidden);
+  }
+});
+
+diagnosticsClose.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setDiagnosticsExpanded(false);
+});
+
+// Collapse on an outside click, but not on the click that opened it.
+document.addEventListener("click", (e) => {
+  if (diagnosticsPopup.hidden) return;
+  if (diagnosticsPopup.contains(e.target) || diagnosticsIndicator.contains(e.target)) return;
+  setDiagnosticsExpanded(false);
+});
+
+// Shared by the Process Manager and Startup Audit tables: manages a
+// {key, direction} sort state for one <table>, wires up click-to-sort +
+// direction-toggle on its `th.sortable` headers, and keeps their arrow
+// indicators in sync. `accessors` maps a sort key to a function producing
+// a comparable value per row; `defaultDirections` is the direction a key
+// starts in the first time it's selected (e.g. text ascending, numeric
+// magnitude descending).
+function makeSortController({ tableId, accessors, defaultDirections, initialKey, initialDirection, onChange }) {
+  let sortKey = initialKey;
+  let sortDirection = initialDirection;
+
+  function updateIndicators() {
+    document.querySelectorAll(`#${tableId} th.sortable`).forEach((th) => {
+      const arrow = th.querySelector(".sort-arrow");
+      if (th.dataset.sortKey === sortKey) {
+        arrow.textContent = sortDirection === "asc" ? "▲" : "▼";
+      } else {
+        arrow.textContent = "";
+      }
+    });
+  }
+
+  document.querySelectorAll(`#${tableId} th.sortable`).forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.sortKey;
+      if (sortKey === key) {
+        sortDirection = sortDirection === "asc" ? "desc" : "asc";
+      } else {
+        sortKey = key;
+        sortDirection = defaultDirections[key];
+      }
+      updateIndicators();
+      onChange();
+    });
+  });
+
+  updateIndicators();
+
+  return {
+    sort(items) {
+      const accessor = accessors[sortKey];
+      const sorted = [...items].sort((a, b) => {
+        const valueA = accessor(a);
+        const valueB = accessor(b);
+        if (valueA < valueB) return -1;
+        if (valueA > valueB) return 1;
+        return 0;
+      });
+      if (sortDirection === "desc") sorted.reverse();
+      return sorted;
+    },
+    get key() {
+      return sortKey;
+    },
+  };
+}
+
 const SOURCE_ORDER = ["startup_folder", "registry_run", "service", "scheduled_task"];
 const SOURCE_LABELS = {
   startup_folder: "Startup Folder",
@@ -185,17 +362,33 @@ const SOURCE_LABELS = {
   service: "Service",
   scheduled_task: "Scheduled Task",
 };
+const IMPACT_RANK = { low: 0, medium: 1, high: 2 };
 
 let startupItems = [];
 
-function sortStartupItems(items) {
-  return [...items].sort((a, b) => {
-    const orderA = SOURCE_ORDER.indexOf(a.source);
-    const orderB = SOURCE_ORDER.indexOf(b.source);
-    if (orderA !== orderB) return orderA - orderB;
-    return a.name.localeCompare(b.name);
-  });
-}
+const STARTUP_SORT_ACCESSORS = {
+  name: (item) => item.name.toLowerCase(),
+  // Composite key so ties within the same source still fall back to
+  // alphabetical order, matching the table's original default sort.
+  source: (item) => `${SOURCE_ORDER.indexOf(item.source)}_${item.name.toLowerCase()}`,
+  impact: (item) => IMPACT_RANK[item.estimated_impact] ?? -1,
+  enabled: (item) => (item.enabled ? 1 : 0),
+};
+const STARTUP_SORT_DEFAULT_DIRECTION = {
+  name: "asc",
+  source: "asc",
+  impact: "desc",
+  enabled: "desc",
+};
+
+const startupSort = makeSortController({
+  tableId: "startup-table",
+  accessors: STARTUP_SORT_ACCESSORS,
+  defaultDirections: STARTUP_SORT_DEFAULT_DIRECTION,
+  initialKey: "source",
+  initialDirection: "asc",
+  onChange: () => renderStartupTable(filterStartupItems(document.getElementById("startup-search").value)),
+});
 
 function buildGroupRow(source, count) {
   const tr = document.createElement("tr");
@@ -212,8 +405,26 @@ function buildStartupRow(item) {
   const tr = document.createElement("tr");
 
   const nameTd = document.createElement("td");
-  nameTd.textContent = item.name;
-  if (item.known_description) {
+  const nameLine = document.createElement("div");
+  nameLine.className = "startup-name-line";
+  nameLine.appendChild(document.createTextNode(item.name));
+  if (item.is_orphaned) {
+    const orphanBadge = document.createElement("span");
+    orphanBadge.className = "orphaned-badge";
+    orphanBadge.textContent = "Orphaned";
+    nameLine.appendChild(orphanBadge);
+  }
+  nameTd.appendChild(nameLine);
+
+  if (item.is_orphaned) {
+    // Takes priority over known_description — a "Steam is a game
+    // launcher…" blurb would be misleading once the exe itself is gone.
+    const description = document.createElement("p");
+    description.className = "known-description orphaned-description";
+    description.textContent =
+      "This program appears to be uninstalled — the file no longer exists. Safe to remove this leftover registry entry.";
+    nameTd.appendChild(description);
+  } else if (item.known_description) {
     const description = document.createElement("p");
     description.className = "known-description";
     description.textContent = item.known_description;
@@ -271,21 +482,32 @@ function renderStartupTable(items) {
     return;
   }
 
-  const sorted = sortStartupItems(items);
-  const groupSizes = new Map();
-  for (const item of sorted) {
-    groupSizes.set(item.source, (groupSizes.get(item.source) || 0) + 1);
+  const sorted = startupSort.sort(items);
+  const fragment = document.createDocumentFragment();
+
+  // The grouped-by-source header rows only make sense when that's actually
+  // the active sort order — sorting by another column (e.g. Impact)
+  // interleaves sources, so a per-source header would repeat misleadingly.
+  if (startupSort.key === "source") {
+    const groupSizes = new Map();
+    for (const item of sorted) {
+      groupSizes.set(item.source, (groupSizes.get(item.source) || 0) + 1);
+    }
+
+    let currentSource = null;
+    for (const item of sorted) {
+      if (item.source !== currentSource) {
+        currentSource = item.source;
+        fragment.appendChild(buildGroupRow(currentSource, groupSizes.get(currentSource)));
+      }
+      fragment.appendChild(buildStartupRow(item));
+    }
+  } else {
+    for (const item of sorted) {
+      fragment.appendChild(buildStartupRow(item));
+    }
   }
 
-  const fragment = document.createDocumentFragment();
-  let currentSource = null;
-  for (const item of sorted) {
-    if (item.source !== currentSource) {
-      currentSource = item.source;
-      fragment.appendChild(buildGroupRow(currentSource, groupSizes.get(currentSource)));
-    }
-    fragment.appendChild(buildStartupRow(item));
-  }
   tbody.appendChild(fragment);
   countEl.textContent = `${items.length} of ${startupItems.length} items`;
 }
@@ -323,6 +545,7 @@ document.getElementById("startup-search").addEventListener("input", (e) => {
 loadStartupAudit();
 
 let processGroups = [];
+let processSearchQuery = "";
 const expandedProcessGroups = new Set();
 
 // Sorting applies to the top-level grouped rows only, using each group's
@@ -341,48 +564,14 @@ const PROCESS_SORT_DEFAULT_DIRECTION = {
   memory: "desc",
 };
 
-let processSortKey = "memory";
-let processSortDirection = "desc";
-
-function sortProcessGroups(groups) {
-  const accessor = PROCESS_SORT_ACCESSORS[processSortKey];
-  const sorted = [...groups].sort((a, b) => {
-    const valueA = accessor(a);
-    const valueB = accessor(b);
-    if (valueA < valueB) return -1;
-    if (valueA > valueB) return 1;
-    return 0;
-  });
-  if (processSortDirection === "desc") sorted.reverse();
-  return sorted;
-}
-
-function updateProcessSortIndicators() {
-  document.querySelectorAll("#process-table th.sortable").forEach((th) => {
-    const arrow = th.querySelector(".sort-arrow");
-    if (th.dataset.sortKey === processSortKey) {
-      arrow.textContent = processSortDirection === "asc" ? "▲" : "▼";
-    } else {
-      arrow.textContent = "";
-    }
-  });
-}
-
-document.querySelectorAll("#process-table th.sortable").forEach((th) => {
-  th.addEventListener("click", () => {
-    const key = th.dataset.sortKey;
-    if (processSortKey === key) {
-      processSortDirection = processSortDirection === "asc" ? "desc" : "asc";
-    } else {
-      processSortKey = key;
-      processSortDirection = PROCESS_SORT_DEFAULT_DIRECTION[key];
-    }
-    updateProcessSortIndicators();
-    renderProcessTable(processGroups);
-  });
+const processSort = makeSortController({
+  tableId: "process-table",
+  accessors: PROCESS_SORT_ACCESSORS,
+  defaultDirections: PROCESS_SORT_DEFAULT_DIRECTION,
+  initialKey: "memory",
+  initialDirection: "desc",
+  onChange: () => applyProcessFilterAndRender(),
 });
-
-updateProcessSortIndicators();
 
 function toggleProcessGroup(label) {
   if (expandedProcessGroups.has(label)) {
@@ -390,8 +579,48 @@ function toggleProcessGroup(label) {
   } else {
     expandedProcessGroups.add(label);
   }
-  renderProcessTable(processGroups);
+  applyProcessFilterAndRender();
 }
+
+function filterProcessGroups(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return processGroups;
+
+  // Only treat the query as a PID match when it's actually numeric, so
+  // typing "3" doesn't match every PID containing a "3" by accident of
+  // also being a plausible name substring search.
+  const isNumericQuery = /^\d+$/.test(q);
+
+  return processGroups.filter((group) => {
+    if (group.label.toLowerCase().includes(q)) return true;
+    return group.members.some(
+      (member) => member.name.toLowerCase().includes(q) || (isNumericQuery && String(member.pid).includes(q))
+    );
+  });
+}
+
+function applyProcessFilterAndRender() {
+  const filtered = filterProcessGroups(processSearchQuery);
+
+  // A match inside a collapsed group's members must not be silently
+  // hidden — auto-expand any matched group whose own label didn't match,
+  // so the matching member row is actually visible.
+  const q = processSearchQuery.trim().toLowerCase();
+  if (q) {
+    for (const group of filtered) {
+      if (group.process_count > 1 && !group.label.toLowerCase().includes(q)) {
+        expandedProcessGroups.add(group.label);
+      }
+    }
+  }
+
+  renderProcessTable(filtered);
+}
+
+document.getElementById("process-search").addEventListener("input", (e) => {
+  processSearchQuery = e.target.value;
+  applyProcessFilterAndRender();
+});
 
 function buildProcessMemberRow(member) {
   const tr = document.createElement("tr");
@@ -490,20 +719,21 @@ function renderProcessTable(groups) {
   tbody.innerHTML = "";
 
   if (groups.length === 0) {
+    const noDataYet = processGroups.length === 0;
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 4;
     td.className = "muted-note";
-    td.textContent = "No process data available.";
+    td.textContent = noDataYet ? "No process data available." : "No processes match your filter.";
     tr.appendChild(td);
     tbody.appendChild(tr);
-    countEl.textContent = "";
+    countEl.textContent = noDataYet ? "" : `0 of ${processGroups.length} groups`;
     return;
   }
 
   const fragment = document.createDocumentFragment();
   let totalProcesses = 0;
-  for (const group of sortProcessGroups(groups)) {
+  for (const group of processSort.sort(groups)) {
     totalProcesses += group.process_count;
     if (group.process_count === 1) {
       fragment.appendChild(buildProcessSingleRow(group));
@@ -517,7 +747,7 @@ function renderProcessTable(groups) {
     }
   }
   tbody.appendChild(fragment);
-  countEl.textContent = `${groups.length} groups, ${totalProcesses} processes`;
+  countEl.textContent = `${groups.length} of ${processGroups.length} groups, ${totalProcesses} processes shown`;
 }
 
 let processPollInFlight = false;
@@ -535,7 +765,7 @@ async function pollProcesses() {
   try {
     const res = await fetch("/api/processes");
     processGroups = await res.json();
-    renderProcessTable(processGroups);
+    applyProcessFilterAndRender();
   } catch (err) {
     console.error("Failed to fetch process list:", err);
     tbody.innerHTML = '<tr><td colspan="4" class="muted-note">Failed to load process data.</td></tr>';

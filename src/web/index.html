@@ -17,6 +17,29 @@
     <p class="subtitle">Live system stats — updates every 2 seconds</p>
   </header>
 
+  <div
+    id="diagnostics-indicator"
+    class="diagnostics-indicator"
+    role="button"
+    tabindex="0"
+    aria-expanded="false"
+    aria-controls="diagnostics-popup"
+  >
+    <span class="diagnostics-indicator-dot dot-neutral" id="diagnostics-indicator-dot"></span>
+    <span class="diagnostics-indicator-label">Diagnostics</span>
+    <span class="diagnostics-indicator-chevron">▾</span>
+  </div>
+
+  <div id="diagnostics-popup" class="diagnostics-popup" hidden>
+    <div class="startup-audit-header">
+      <h2>Diagnostics — Why Is It Slow?</h2>
+      <button type="button" id="diagnostics-close" class="diagnostics-close" aria-label="Close diagnostics">✕</button>
+    </div>
+    <div id="diagnostics-list" class="diagnostics-list">
+      <p class="muted-note">Loading…</p>
+    </div>
+  </div>
+
   <main class="grid">
     <section class="card">
       <h2>CPU</h2>
@@ -46,41 +69,16 @@
   </main>
 
   <section class="panel">
-    <div class="card startup-audit">
-      <div class="startup-audit-header">
-        <h2>Startup &amp; Services Audit</h2>
-        <input
-          type="search"
-          id="startup-search"
-          class="search-input"
-          placeholder="Filter by name, source, or command…"
-          autocomplete="off"
-        />
-      </div>
-      <p class="muted-note" id="startup-count"></p>
-      <div class="table-scroll">
-        <table class="startup-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Source</th>
-              <th>Command</th>
-              <th>Impact</th>
-              <th>Enabled</th>
-            </tr>
-          </thead>
-          <tbody id="startup-table-body">
-            <tr><td colspan="5" class="muted-note">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel">
     <div class="card process-manager">
       <div class="startup-audit-header">
         <h2>Process Manager</h2>
+        <input
+          type="search"
+          id="process-search"
+          class="search-input"
+          placeholder="Filter by name or PID…"
+          autocomplete="off"
+        />
       </div>
       <p class="muted-note" id="process-count"></p>
       <div class="table-scroll">
@@ -95,6 +93,38 @@
           </thead>
           <tbody id="process-table-body">
             <tr><td colspan="4" class="muted-note">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="card startup-audit">
+      <div class="startup-audit-header">
+        <h2>Startup &amp; Services Audit</h2>
+        <input
+          type="search"
+          id="startup-search"
+          class="search-input"
+          placeholder="Filter by name, source, or command…"
+          autocomplete="off"
+        />
+      </div>
+      <p class="muted-note" id="startup-count"></p>
+      <div class="table-scroll">
+        <table class="startup-table" id="startup-table">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort-key="name">Name<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort-key="source">Source<span class="sort-arrow"></span></th>
+              <th>Command</th>
+              <th class="sortable" data-sort-key="impact">Impact<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort-key="enabled">Enabled<span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="startup-table-body">
+            <tr><td colspan="5" class="muted-note">Loading…</td></tr>
           </tbody>
         </table>
       </div>
