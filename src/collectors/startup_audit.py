@@ -1,19 +1,24 @@
 """Audits startup programs and services on Windows.
 
-STUB — this is the next module to build out with Claude Code.
-
-Planned data sources:
+Implemented data sources:
 - Startup folder(s): shell:startup and shell:common startup
 - Registry Run/RunOnce keys (HKCU and HKLM, via `winreg`)
+
+Not yet implemented (planned next):
 - Scheduled Tasks that run at logon (via `pywin32` or `schtasks` output)
 - Running services and their startup type (via `wmi` or `pywin32`)
 
-Each finding should map to a StartupItem so the API/UI layer doesn't need to
-know where the data came from.
+Each finding maps to a StartupItem so the API/UI layer doesn't need to know
+where the data came from.
 """
 
-from dataclasses import dataclass
+import os
+import winreg
+from dataclasses import asdict, dataclass
 from enum import Enum
+from pathlib import Path
+
+import win32com.client
 
 
 class StartupSource(str, Enum):
@@ -33,14 +38,99 @@ class StartupItem:
     known_description: str | None = None
     estimated_impact: str | None = None  # e.g. "low" / "medium" / "high"
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# (hive, subkey) pairs to enumerate. HKLM entries apply to all users; HKCU to
+# the current user only. RunOnce keys are frequently empty or absent.
+_REGISTRY_RUN_KEYS = [
+    (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run"),
+    (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+    (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run"),
+    (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+]
+
+
+def _resolve_shortcut(path: Path) -> str:
+    """Resolve a .lnk file to its target path + arguments.
+
+    Falls back to the raw .lnk path if COM resolution fails for any reason
+    (e.g. a malformed shortcut).
+    """
+    try:
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(str(path))
+        target = shortcut.Targetpath
+        if not target:
+            return str(path)
+        return f"{target} {shortcut.Arguments}".strip()
+    except Exception:
+        return str(path)
+
+
+def _scan_startup_folder(folder: Path) -> list[StartupItem]:
+    """Return startup items found directly inside a single startup folder."""
+    items: list[StartupItem] = []
+    if not folder.is_dir():
+        return items
+
+    for entry in folder.iterdir():
+        if not entry.is_file() or entry.name.lower() == "desktop.ini":
+            continue
+
+        command = _resolve_shortcut(entry) if entry.suffix.lower() == ".lnk" else str(entry)
+        items.append(
+            StartupItem(
+                name=entry.stem,
+                source=StartupSource.STARTUP_FOLDER,
+                command=command,
+                enabled=True,
+            )
+        )
+    return items
+
+
+def _scan_registry_run_keys() -> list[StartupItem]:
+    """Return startup items from the registry Run/RunOnce keys (HKCU + HKLM)."""
+    items: list[StartupItem] = []
+
+    for hive, subkey in _REGISTRY_RUN_KEYS:
+        try:
+            key = winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ)
+        except FileNotFoundError:
+            continue
+
+        with key:
+            index = 0
+            while True:
+                try:
+                    name, command, _value_type = winreg.EnumValue(key, index)
+                except OSError:
+                    break
+                items.append(
+                    StartupItem(
+                        name=name,
+                        source=StartupSource.REGISTRY_RUN,
+                        command=command,
+                        enabled=True,
+                    )
+                )
+                index += 1
+
+    return items
+
 
 def get_startup_items() -> list[StartupItem]:
-    """Return all discovered startup items across all sources.
+    """Return all discovered startup items across the implemented sources.
 
-    TODO: implement each source. Suggested order:
-    1. Startup folder (simplest — just a directory listing)
-    2. Registry Run keys (winreg)
-    3. Services (wmi or pywin32)
-    4. Scheduled Tasks (more involved — schtasks or COM API)
+    TODO: add Services and Scheduled Tasks sources.
     """
-    raise NotImplementedError("startup_audit is a stub — build me next")
+    user_startup = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    common_startup = Path(os.environ["PROGRAMDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+    return [
+        *_scan_startup_folder(user_startup),
+        *_scan_startup_folder(common_startup),
+        *_scan_registry_run_keys(),
+    ]
