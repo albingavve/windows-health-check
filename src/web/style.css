@@ -500,6 +500,129 @@ h1 {
   border-color: var(--glow-magenta);
 }
 
+.hud-popup-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-popup-refresh {
+  background: none;
+  border: 1px solid var(--chrome-border);
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 9px;
+  font-size: 0.9rem;
+}
+
+.hud-popup-refresh:hover {
+  color: var(--glow-cyan);
+  border-color: var(--glow-cyan);
+}
+
+.devices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.device-section-title {
+  margin: 0 0 6px;
+  font-family: var(--font-header);
+  font-size: 0.75rem;
+  color: var(--chrome-text);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.device-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--chrome-border);
+  font-size: 0.85rem;
+}
+
+.device-item:last-child {
+  border-bottom: none;
+}
+
+.device-name {
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+.device-meta {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.builtin-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-left: 8px;
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+}
+
+.builtin-badge.is-builtin {
+  color: var(--jewel-sapphire);
+  border: 1px solid var(--jewel-sapphire);
+}
+
+.builtin-badge.is-external {
+  color: var(--muted);
+  border: 1px solid var(--chrome-border);
+}
+
+.device-generic-section summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.device-generic-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.device-generic-section summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  color: var(--glow-cyan);
+}
+
+.device-generic-section[open] summary::before {
+  content: "▾";
+}
+
+.device-generic-section summary:hover {
+  color: var(--glow-cyan);
+}
+
+.device-generic-section .device-list {
+  margin-top: 8px;
+}
+
 .specs-list {
   display: flex;
   flex-direction: column;

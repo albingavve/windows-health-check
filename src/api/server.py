@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from src.collectors.device_inventory import get_device_inventory
 from src.collectors.diagnostics import diagnose_system
 from src.collectors.process_list import ProcessGroup, get_process_list, group_processes
 from src.collectors.startup_audit import get_startup_items
@@ -118,6 +119,17 @@ def read_specs() -> dict:
     and caches the result itself, since this data doesn't change during a
     running session."""
     return get_system_specs().to_dict()
+
+
+@app.get("/api/devices")
+def read_devices() -> dict:
+    """Currently-connected USB peripherals, keyboards, and monitors.
+    Deliberately NOT cached like /api/specs — device presence can change
+    mid-session (plug/unplug) — but this is safe to query fresh every call
+    because the frontend only ever calls it on-demand (the Devices popup's
+    first open and its own manual refresh button), never on a continuous
+    poll."""
+    return get_device_inventory().to_dict()
 
 
 @app.post("/api/processes/{pid}/terminate")

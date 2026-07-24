@@ -19,6 +19,19 @@
 
   <div class="hud-indicator-row">
     <div
+      id="devices-indicator"
+      class="hud-indicator"
+      role="button"
+      tabindex="0"
+      aria-expanded="false"
+      aria-controls="devices-popup"
+    >
+      <span class="hud-indicator-dot dot-neutral"></span>
+      <span class="hud-indicator-label">Devices</span>
+      <span class="hud-indicator-chevron">▾</span>
+    </div>
+
+    <div
       id="specs-indicator"
       class="hud-indicator"
       role="button"
@@ -42,6 +55,19 @@
       <span class="hud-indicator-dot dot-neutral" id="diagnostics-indicator-dot"></span>
       <span class="hud-indicator-label">Diagnostics</span>
       <span class="hud-indicator-chevron">▾</span>
+    </div>
+  </div>
+
+  <div id="devices-popup" class="hud-popup" hidden>
+    <div class="startup-audit-header">
+      <h2>Devices</h2>
+      <div class="hud-popup-header-actions">
+        <button type="button" id="devices-refresh" class="hud-popup-refresh" aria-label="Refresh devices" title="Refresh">⟳</button>
+        <button type="button" id="devices-close" class="hud-popup-close" aria-label="Close devices">✕</button>
+      </div>
+    </div>
+    <div id="devices-list" class="devices-list">
+      <p class="muted-note">Loading…</p>
     </div>
   </div>
 

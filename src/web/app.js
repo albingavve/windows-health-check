@@ -428,6 +428,201 @@ makeHudPopup({
   onFirstOpen: loadSpecs,
 });
 
+function buildDeviceSection(title, items, renderItem) {
+  const section = document.createElement("div");
+  section.className = "device-section";
+
+  const heading = document.createElement("h3");
+  heading.className = "device-section-title";
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  if (!items || items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted-note";
+    empty.textContent = "None detected.";
+    section.appendChild(empty);
+    return section;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "device-list";
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "device-item";
+    renderItem(li, item);
+    list.appendChild(li);
+  }
+  section.appendChild(list);
+
+  return section;
+}
+
+function buildDeviceRow(name, meta) {
+  const nameEl = document.createElement("span");
+  nameEl.className = "device-name";
+  nameEl.textContent = name;
+
+  const metaEl = document.createElement("span");
+  metaEl.className = "device-meta";
+  metaEl.textContent = meta || "";
+
+  return [nameEl, metaEl];
+}
+
+function buildBuiltInTag() {
+  // Used where "built-in" is only ever a best-effort positive signal
+  // (webcams, via LocationInformation) — never shown as "External" here,
+  // since the absence of the hint means "unknown", not "definitely not
+  // built-in". Contrast with buildBuiltInStateBadge() below, used where
+  // the signal is fully deterministic either way (keyboards, displays).
+  const badge = document.createElement("span");
+  badge.className = "builtin-badge is-builtin";
+  badge.textContent = "Built-in";
+  return badge;
+}
+
+function buildBuiltInStateBadge(isBuiltIn) {
+  const badge = document.createElement("span");
+  badge.className = `builtin-badge ${isBuiltIn ? "is-builtin" : "is-external"}`;
+  badge.textContent = isBuiltIn ? "Built-in" : "External";
+  return badge;
+}
+
+function renderUsbDevice(li, device) {
+  // known_devices.py's category (e.g. "Wireless Mouse/Keyboard Receiver")
+  // is friendlier than the raw Windows product string, so it's the
+  // headline when available — with the raw name kept as a small sub-line,
+  // same convention as known_description elsewhere in this app.
+  const label = device.category || device.name;
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "device-name";
+  nameEl.appendChild(document.createTextNode(label));
+  if (device.is_built_in) {
+    nameEl.appendChild(buildBuiltInTag());
+  }
+  if (device.category && device.category !== device.name) {
+    const rawName = document.createElement("p");
+    rawName.className = "known-description";
+    rawName.textContent = device.name;
+    nameEl.appendChild(rawName);
+  }
+  li.appendChild(nameEl);
+
+  const metaEl = document.createElement("span");
+  metaEl.className = "device-meta";
+  metaEl.textContent = device.manufacturer || "";
+  li.appendChild(metaEl);
+
+  if (device.interface_count > 1) {
+    // Available on hover, not shown inline — a raw interface count isn't
+    // meaningful to most users, but explains e.g. why two receivers
+    // report different counts if anyone's curious.
+    li.title = `Windows reports ${device.interface_count} logical interfaces for this device.`;
+  }
+}
+
+function renderKeyboard(li, keyboard) {
+  const nameEl = document.createElement("span");
+  nameEl.className = "device-name";
+  nameEl.appendChild(document.createTextNode(keyboard.name));
+  nameEl.appendChild(buildBuiltInStateBadge(keyboard.is_built_in));
+  li.appendChild(nameEl);
+
+  const metaEl = document.createElement("span");
+  metaEl.className = "device-meta";
+  metaEl.textContent = keyboard.manufacturer || "";
+  li.appendChild(metaEl);
+}
+
+function renderMonitor(li, monitor) {
+  // Built-in panels are labeled outright rather than shown with their
+  // manufacturer/model — those EDID strings ("BOE NE156FHM-NX6") aren't
+  // meaningful to most users the way "Built-in Laptop Screen" is.
+  // External monitors are unaffected and keep showing manufacturer/model.
+  // monitor.is_built_in === null (Display Config API unavailable) falls
+  // back to the same manufacturer/model display as a known-external one,
+  // since nothing here was actually confirmed either way.
+  const name = monitor.is_built_in
+    ? "Built-in Laptop Screen"
+    : [monitor.manufacturer, monitor.model].filter(Boolean).join(" ") || "Unknown display";
+  for (const el of buildDeviceRow(name, monitor.resolution)) li.appendChild(el);
+}
+
+function buildGenericUsbSection(items) {
+  // Collapsed by default and skipped entirely when empty — this is
+  // deliberately the "you probably don't care" bucket (hubs, root
+  // routers, composite-device wrapper entries, unlabeled input devices),
+  // kept out of the way of the primary peripheral list.
+  if (!items || items.length === 0) return null;
+
+  const details = document.createElement("details");
+  details.className = "device-generic-section";
+
+  const summary = document.createElement("summary");
+  summary.className = "device-section-title";
+  summary.textContent = `System & Hub Devices (${items.length})`;
+  details.appendChild(summary);
+
+  const list = document.createElement("ul");
+  list.className = "device-list";
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "device-item";
+    renderUsbDevice(li, item);
+    list.appendChild(li);
+  }
+  details.appendChild(list);
+
+  return details;
+}
+
+function renderDevices(devices) {
+  const container = document.getElementById("devices-list");
+  container.innerHTML = "";
+
+  const primaryUsbDevices = devices.usb_devices.filter((device) => !device.is_generic);
+  const genericUsbDevices = devices.usb_devices.filter((device) => device.is_generic);
+
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(buildDeviceSection("USB Devices", primaryUsbDevices, renderUsbDevice));
+  fragment.appendChild(buildDeviceSection("Keyboards", devices.keyboards, renderKeyboard));
+
+  const genericSection = buildGenericUsbSection(genericUsbDevices);
+  if (genericSection) fragment.appendChild(genericSection);
+
+  fragment.appendChild(buildDeviceSection("Displays", devices.monitors, renderMonitor));
+  container.appendChild(fragment);
+}
+
+async function loadDevices() {
+  const container = document.getElementById("devices-list");
+  container.innerHTML = '<p class="muted-note">Loading…</p>';
+  try {
+    const res = await fetch("/api/devices");
+    const devices = await res.json();
+    renderDevices(devices);
+  } catch (err) {
+    console.error("Failed to fetch devices:", err);
+    container.innerHTML = '<p class="muted-note">Failed to load devices.</p>';
+  }
+}
+
+makeHudPopup({
+  pillId: "devices-indicator",
+  popupId: "devices-popup",
+  closeId: "devices-close",
+  // Devices can change mid-session (plug/unplug), but there's still no
+  // reason to poll — fetched lazily on first open, same as Specs, plus a
+  // manual refresh button for after physically plugging something in.
+  onFirstOpen: loadDevices,
+});
+
+document.getElementById("devices-refresh").addEventListener("click", () => {
+  loadDevices();
+});
+
 // Shared by the Process Manager and Startup Audit tables: manages a
 // {key, direction} sort state for one <table>, wires up click-to-sort +
 // direction-toggle on its `th.sortable` headers, and keeps their arrow
