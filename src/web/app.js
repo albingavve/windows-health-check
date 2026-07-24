@@ -86,7 +86,7 @@ function buildGroupRow(source, count) {
   const tr = document.createElement("tr");
   tr.className = "group-row";
   const td = document.createElement("td");
-  td.colSpan = 4;
+  td.colSpan = 5;
   td.textContent = `${SOURCE_LABELS[source] || source} (${count})`;
   tr.appendChild(td);
   return tr;
@@ -97,6 +97,13 @@ function buildStartupRow(item) {
 
   const nameTd = document.createElement("td");
   nameTd.textContent = item.name;
+  if (item.known_description) {
+    const description = document.createElement("p");
+    description.className = "known-description";
+    description.textContent = item.known_description;
+    description.title = item.known_description;
+    nameTd.appendChild(description);
+  }
   tr.appendChild(nameTd);
 
   const sourceTd = document.createElement("td");
@@ -108,6 +115,18 @@ function buildStartupRow(item) {
   commandTd.textContent = item.command;
   commandTd.title = item.command;
   tr.appendChild(commandTd);
+
+  const impactTd = document.createElement("td");
+  if (item.estimated_impact) {
+    const impactBadge = document.createElement("span");
+    impactBadge.className = `impact-badge impact-${item.estimated_impact}`;
+    impactBadge.textContent = item.estimated_impact;
+    impactTd.appendChild(impactBadge);
+  } else {
+    impactTd.textContent = "—";
+    impactTd.className = "muted-note";
+  }
+  tr.appendChild(impactTd);
 
   const statusTd = document.createElement("td");
   const badge = document.createElement("span");
@@ -127,7 +146,7 @@ function renderStartupTable(items) {
   if (items.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 5;
     td.className = "muted-note";
     td.textContent = "No startup items match your filter.";
     tr.appendChild(td);
@@ -163,7 +182,8 @@ function filterStartupItems(query) {
     return (
       item.name.toLowerCase().includes(q) ||
       sourceLabel.includes(q) ||
-      item.command.toLowerCase().includes(q)
+      item.command.toLowerCase().includes(q) ||
+      (item.known_description || "").toLowerCase().includes(q)
     );
   });
 }
@@ -176,7 +196,7 @@ async function loadStartupAudit() {
     renderStartupTable(startupItems);
   } catch (err) {
     console.error("Failed to fetch startup audit:", err);
-    tbody.innerHTML = '<tr><td colspan="4" class="muted-note">Failed to load startup audit data.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted-note">Failed to load startup audit data.</td></tr>';
   }
 }
 

@@ -145,3 +145,30 @@ def test_scan_services_maps_fields_and_start_mode_to_enabled():
 def test_scan_services_returns_empty_list_on_wmi_failure():
     with patch("src.collectors.startup_audit.wmi.WMI", side_effect=Exception("WMI unavailable")):
         assert _scan_services() == []
+
+
+def test_get_startup_items_enriches_known_and_unknown_items(tmp_path, monkeypatch):
+    appdata = tmp_path / "appdata"
+    programdata = tmp_path / "programdata"
+    user_startup = appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    common_startup = programdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    user_startup.mkdir(parents=True)
+    common_startup.mkdir(parents=True)
+    (user_startup / "Discord.exe").write_text("")
+    (common_startup / "SomeRandomTool.exe").write_text("")
+
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("PROGRAMDATA", str(programdata))
+
+    with patch("src.collectors.startup_audit._scan_registry_run_keys", return_value=[]), patch(
+        "src.collectors.startup_audit._scan_services", return_value=[]
+    ):
+        items = get_startup_items()
+
+    discord_item = next(i for i in items if i.name == "Discord")
+    assert discord_item.known_description is not None
+    assert discord_item.estimated_impact == "medium"
+
+    unknown_item = next(i for i in items if i.name == "SomeRandomTool")
+    assert unknown_item.known_description is None
+    assert unknown_item.estimated_impact is None

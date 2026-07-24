@@ -23,6 +23,8 @@ import pythoncom
 import win32com.client
 import wmi
 
+from src.collectors.known_software import lookup_known_software
+
 
 class StartupSource(str, Enum):
     STARTUP_FOLDER = "startup_folder"
@@ -166,6 +168,14 @@ def _scan_services() -> list[StartupItem]:
         return []
 
 
+def _apply_known_software(items: list[StartupItem]) -> list[StartupItem]:
+    """Fill in known_description/estimated_impact for items that match the
+    known-software lookup table; unmatched items are left as None."""
+    for item in items:
+        item.known_description, item.estimated_impact = lookup_known_software(item.name, item.command)
+    return items
+
+
 def get_startup_items() -> list[StartupItem]:
     """Return all discovered startup items across the implemented sources.
 
@@ -174,9 +184,10 @@ def get_startup_items() -> list[StartupItem]:
     user_startup = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     common_startup = Path(os.environ["PROGRAMDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
-    return [
+    items = [
         *_scan_startup_folder(user_startup),
         *_scan_startup_folder(common_startup),
         *_scan_registry_run_keys(),
         *_scan_services(),
     ]
+    return _apply_known_software(items)

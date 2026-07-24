@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -12,6 +12,20 @@ from src.collectors.system_stats import get_system_snapshot
 app = FastAPI(title="PC Health Dashboard")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+@app.middleware("http")
+async def no_cache_static_assets(request: Request, call_next):
+    """Force the browser to revalidate /assets on every request.
+
+    This is a local dev tool with no build step or cache-busting filenames,
+    so without this a stale cached app.js/index.html can keep running after
+    an edit even through a hard refresh.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/assets") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/api/stats")
