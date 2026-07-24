@@ -366,6 +366,33 @@ h1 {
   box-shadow: 0 0 5px 1px var(--jewel-ruby);
 }
 
+.process-group-row {
+  cursor: pointer;
+}
+
+.process-group-row td {
+  font-weight: 600;
+}
+
+.process-group-row:hover td {
+  background: rgba(77, 232, 220, 0.06);
+}
+
+.group-toggle {
+  display: inline-block;
+  width: 1.1em;
+  color: var(--glow-cyan);
+  text-shadow: 0 0 6px rgba(77, 232, 220, 0.5);
+}
+
+.process-member-row td {
+  color: var(--muted);
+}
+
+.process-member-row .process-member-name {
+  padding-left: 30px;
+}
+
 /* Brief glitch/flicker pulse on numeric values when they update */
 @keyframes value-glitch {
   0% { text-shadow: none; transform: none; opacity: 1; }

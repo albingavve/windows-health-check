@@ -77,6 +77,30 @@
     </div>
   </section>
 
+  <section class="panel">
+    <div class="card process-manager">
+      <div class="startup-audit-header">
+        <h2>Process Manager</h2>
+      </div>
+      <p class="muted-note" id="process-count"></p>
+      <div class="table-scroll">
+        <table class="startup-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>PID</th>
+              <th>CPU %</th>
+              <th>Memory</th>
+            </tr>
+          </thead>
+          <tbody id="process-table-body">
+            <tr><td colspan="4" class="muted-note">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <script src="/assets/app.js"></script>
 </body>
 </html>

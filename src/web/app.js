@@ -321,3 +321,161 @@ document.getElementById("startup-search").addEventListener("input", (e) => {
 });
 
 loadStartupAudit();
+
+let processGroups = [];
+const expandedProcessGroups = new Set();
+
+function toggleProcessGroup(label) {
+  if (expandedProcessGroups.has(label)) {
+    expandedProcessGroups.delete(label);
+  } else {
+    expandedProcessGroups.add(label);
+  }
+  renderProcessTable(processGroups);
+}
+
+function buildProcessMemberRow(member) {
+  const tr = document.createElement("tr");
+  tr.className = "process-member-row";
+
+  const nameTd = document.createElement("td");
+  nameTd.className = "process-member-name";
+  nameTd.textContent = member.name;
+  tr.appendChild(nameTd);
+
+  const pidTd = document.createElement("td");
+  pidTd.textContent = member.pid;
+  tr.appendChild(pidTd);
+
+  const cpuTd = document.createElement("td");
+  cpuTd.textContent = `${member.cpu_percent.toFixed(1)}%`;
+  tr.appendChild(cpuTd);
+
+  const memTd = document.createElement("td");
+  memTd.textContent = `${member.memory_mb.toFixed(1)} MB`;
+  tr.appendChild(memTd);
+
+  return tr;
+}
+
+function buildProcessGroupRow(group) {
+  const tr = document.createElement("tr");
+  tr.className = "process-group-row";
+  tr.addEventListener("click", () => toggleProcessGroup(group.label));
+
+  const isExpanded = expandedProcessGroups.has(group.label);
+
+  const nameTd = document.createElement("td");
+  const toggle = document.createElement("span");
+  toggle.className = "group-toggle";
+  toggle.textContent = isExpanded ? "▾" : "▸";
+  nameTd.appendChild(toggle);
+  nameTd.appendChild(document.createTextNode(group.label));
+  if (group.grouping_method === "shared_name") {
+    nameTd.title =
+      "Grouped by shared executable name only — no confirmed parent/child relationship between these processes.";
+  }
+  tr.appendChild(nameTd);
+
+  const countTd = document.createElement("td");
+  countTd.textContent = `${group.process_count} processes`;
+  tr.appendChild(countTd);
+
+  const cpuTd = document.createElement("td");
+  cpuTd.textContent = `${group.total_cpu_percent.toFixed(1)}%`;
+  tr.appendChild(cpuTd);
+
+  const memTd = document.createElement("td");
+  memTd.textContent = `${group.total_memory_mb.toFixed(1)} MB`;
+  tr.appendChild(memTd);
+
+  return tr;
+}
+
+function buildProcessSingleRow(group) {
+  // A lone process (process_count === 1) — nothing to expand, render like
+  // a plain row using its one member's own values.
+  const member = group.members[0];
+  const tr = document.createElement("tr");
+
+  const nameTd = document.createElement("td");
+  nameTd.textContent = group.label;
+  tr.appendChild(nameTd);
+
+  const pidTd = document.createElement("td");
+  pidTd.textContent = member.pid;
+  tr.appendChild(pidTd);
+
+  const cpuTd = document.createElement("td");
+  cpuTd.textContent = `${member.cpu_percent.toFixed(1)}%`;
+  tr.appendChild(cpuTd);
+
+  const memTd = document.createElement("td");
+  memTd.textContent = `${member.memory_mb.toFixed(1)} MB`;
+  tr.appendChild(memTd);
+
+  return tr;
+}
+
+function renderProcessTable(groups) {
+  const tbody = document.getElementById("process-table-body");
+  const countEl = document.getElementById("process-count");
+  tbody.innerHTML = "";
+
+  if (groups.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.className = "muted-note";
+    td.textContent = "No process data available.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    countEl.textContent = "";
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  let totalProcesses = 0;
+  for (const group of groups) {
+    totalProcesses += group.process_count;
+    if (group.process_count === 1) {
+      fragment.appendChild(buildProcessSingleRow(group));
+      continue;
+    }
+    fragment.appendChild(buildProcessGroupRow(group));
+    if (expandedProcessGroups.has(group.label)) {
+      for (const member of group.members) {
+        fragment.appendChild(buildProcessMemberRow(member));
+      }
+    }
+  }
+  tbody.appendChild(fragment);
+  countEl.textContent = `${groups.length} groups, ${totalProcesses} processes`;
+}
+
+let processPollInFlight = false;
+
+async function pollProcesses() {
+  // /api/processes enumerates 250-300+ processes and can take several
+  // seconds — longer than the 2s poll interval. Without this guard, a slow
+  // response causes the next poll to fire before it returns, and those
+  // overlapping requests pile up and exhaust the server's thread pool,
+  // starving other endpoints (this is what broke the startup audit table).
+  if (processPollInFlight) return;
+  processPollInFlight = true;
+
+  const tbody = document.getElementById("process-table-body");
+  try {
+    const res = await fetch("/api/processes");
+    processGroups = await res.json();
+    renderProcessTable(processGroups);
+  } catch (err) {
+    console.error("Failed to fetch process list:", err);
+    tbody.innerHTML = '<tr><td colspan="4" class="muted-note">Failed to load process data.</td></tr>';
+  } finally {
+    processPollInFlight = false;
+  }
+}
+
+pollProcesses();
+setInterval(pollProcesses, 2000);

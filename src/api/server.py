@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from src.collectors.process_list import get_process_list, group_processes
 from src.collectors.startup_audit import get_startup_items
 from src.collectors.system_stats import get_system_snapshot
 
@@ -39,6 +40,14 @@ def read_stats() -> dict:
 def read_startup() -> list[dict]:
     """Discovered startup items from the Startup folder and registry Run/RunOnce keys."""
     return [item.to_dict() for item in get_startup_items()]
+
+
+@app.get("/api/processes")
+def read_processes() -> list[dict]:
+    """Running processes grouped by parent-child ancestry (falling back to
+    shared executable name), each with summed CPU%/memory and its member
+    processes for expansion — see process_list.group_processes()."""
+    return [group.to_dict() for group in group_processes(get_process_list())]
 
 
 # Serve the frontend. Mounted after the API routes so /api/* takes priority.
