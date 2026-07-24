@@ -27,6 +27,11 @@ class ProcessInfo:
     name: str
     cpu_percent: float
     memory_mb: float
+    # Best-effort process *role* parsed from command-line flags, e.g. "GPU
+    # Process"/"Renderer Process" — None when no recognized pattern is
+    # found. See _parse_process_role()'s docstring for what this can and
+    # can't tell you.
+    role: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -95,6 +100,70 @@ def _get_ppid_map() -> dict[int, int] | None:
         return None
 
 
+# Chromium/Electron-family processes (Chrome, Edge, msedgewebview2, VS
+# Code, Discord, Slack, ...) mark their role with a "--type=<value>" flag.
+_CHROMIUM_TYPE_ROLES = {
+    "renderer": "Renderer Process",
+    "gpu-process": "GPU Process",
+    "utility": "Utility Process",
+    "crashpad-handler": "Crash Handler",
+    "broker": "Broker Process",
+    "zygote": "Zygote Process",
+    "extensionHost": "Extension Host",  # VS Code
+}
+
+# Firefox marks its content processes with "-contentproc", with the
+# specific role as the final positional argument. Observed directly:
+# "tab", "utility"; "socket"/"gpu"/"rdd"/"gmplugin" are documented Firefox
+# subprocess kinds included defensively, not verified against a live
+# process on this machine.
+_FIREFOX_CONTENTPROC_ROLES = {
+    "tab": "Tab Content Process",
+    "utility": "Utility Process",
+    "socket": "Socket Process",
+    "gpu": "GPU Process",
+    "rdd": "Media Decoder Process",
+    "gmplugin": "Media Plugin Process",
+}
+
+
+def _parse_process_role(cmdline: list[str]) -> str | None:
+    """Best-effort process *role* from common multi-process app flags.
+
+    IMPORTANT LIMITATION: this identifies what *kind* of process something
+    is (a GPU process, a tab/content process, a utility process, ...) — it
+    does NOT and cannot identify *which* browser tab or website a renderer
+    belongs to. The command line for a renderer/content process doesn't
+    contain that information; psutil (and the OS) has no concept of "which
+    tab" at all. Don't paper over that distinction in the UI.
+
+    Returns None — rather than guessing — when no recognized pattern is
+    found, e.g. for a main/browser process with no "--type=" flag at all.
+    """
+    if not cmdline:
+        return None
+
+    for arg in cmdline:
+        if arg.startswith("--type="):
+            return _CHROMIUM_TYPE_ROLES.get(arg.split("=", 1)[1])
+
+    if "-contentproc" in cmdline:
+        return _FIREFOX_CONTENTPROC_ROLES.get(cmdline[-1].lower())
+
+    return None
+
+
+def _get_process_role(process: psutil.Process) -> str | None:
+    """Fetch a process's cmdline and derive a role label, degrading to None
+    (rather than skipping the whole process) if cmdline access is denied —
+    common for protected system processes."""
+    try:
+        cmdline = process.cmdline()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+    return _parse_process_role(cmdline)
+
+
 def get_process_list() -> list[ProcessInfo]:
     """Return a snapshot of all currently running processes.
 
@@ -131,6 +200,8 @@ def get_process_list() -> list[ProcessInfo]:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
+        role = _get_process_role(process)
+
         results.append(
             ProcessInfo(
                 pid=pid,
@@ -138,6 +209,7 @@ def get_process_list() -> list[ProcessInfo]:
                 name=name,
                 cpu_percent=cpu_percent,
                 memory_mb=memory_mb,
+                role=role,
             )
         )
 

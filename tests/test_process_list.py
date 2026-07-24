@@ -3,14 +3,21 @@ from unittest.mock import MagicMock, patch
 import psutil
 
 from src.collectors import process_list as process_list_module
-from src.collectors.process_list import ProcessInfo, get_process_list, group_processes
+from src.collectors.process_list import (
+    ProcessInfo,
+    _get_process_role,
+    _parse_process_role,
+    get_process_list,
+    group_processes,
+)
 
 
-def _make_fake_process(name, memory_bytes, cpu_percent_values):
+def _make_fake_process(name, memory_bytes, cpu_percent_values, cmdline=()):
     process = MagicMock()
     process.name.return_value = name
     process.memory_info.return_value = MagicMock(rss=memory_bytes)
     process.cpu_percent.side_effect = cpu_percent_values
+    process.cmdline.return_value = list(cmdline)
     return process
 
 
@@ -183,3 +190,47 @@ def test_group_processes_sorts_groups_by_total_memory_descending():
     groups = group_processes(processes)
 
     assert [g.label for g in groups] == ["big.exe", "medium.exe", "small.exe"]
+
+
+# --- process role labeling ---
+
+
+def test_parse_process_role_recognizes_chromium_type_flag():
+    cmdline = ["chrome.exe", "--type=gpu-process", "--field-trial-handle=1704"]
+    assert _parse_process_role(cmdline) == "GPU Process"
+
+
+def test_parse_process_role_recognizes_firefox_contentproc_flag():
+    cmdline = ["firefox.exe", "-contentproc", "-parentPid", "12828", "-", "117", "tab"]
+    assert _parse_process_role(cmdline) == "Tab Content Process"
+
+
+def test_parse_process_role_leaves_unrecognized_or_blank_cmdline_as_none():
+    # No recognizable flag at all (e.g. a plain main/browser process).
+    assert _parse_process_role(["chrome.exe"]) is None
+    # An unrecognized --type= value — don't guess at what it might mean.
+    assert _parse_process_role(["chrome.exe", "--type=some-future-thing"]) is None
+    # Empty cmdline (e.g. cmdline() returned nothing usable).
+    assert _parse_process_role([]) is None
+
+
+def test_get_process_role_returns_none_on_access_denied():
+    process = MagicMock()
+    process.cmdline.side_effect = psutil.AccessDenied(pid=999)
+
+    assert _get_process_role(process) is None
+
+
+def test_get_process_list_populates_role_from_cmdline():
+    process_list_module._process_cache.clear()
+
+    persistent_process = _make_fake_process(
+        "chrome.exe", 100 * 1024 * 1024, [0.0, 0.0], cmdline=["chrome.exe", "--type=utility"]
+    )
+
+    with patch("src.collectors.process_list.psutil.pids", return_value=[500]), patch(
+        "src.collectors.process_list.psutil.Process", return_value=persistent_process
+    ), patch("src.collectors.process_list._get_ppid_map", return_value={500: 1}):
+        result = get_process_list()
+
+    assert result[0].role == "Utility Process"
