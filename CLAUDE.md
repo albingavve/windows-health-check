@@ -1,13 +1,16 @@
 # CLAUDE.md — Project Brief for Claude Code
 
 ## What this is
-A Windows 11 PC health & optimization tool that's grown into a genuine
-**Task Manager replacement/companion**: live system stats, a full sortable
-process list with real CPU/memory usage, and a startup/service audit that
-explains what's running and why, all in one dashboard the user actually
-wants to use day-to-day instead of opening Task Manager.
+A Windows 11 PC health & optimization tool that replaced Task Manager for
+daily use: live system stats, a full process manager with grouping and
+process termination, a startup/service audit that explains what's running
+and why, plus diagnostics, specs, and devices panels — all built to make
+Windows itself transparent and controllable.
 
 **Working title:** PC Health Dashboard
+**Status: v1 complete.** This file describes the current, real state of the
+project — not a plan for something not yet built. Roadmap items below are
+genuinely unbuilt v2 work, not aspirational.
 
 ## Mission (read this before making feature decisions)
 The user likes Windows 11 and wants to stay on it — this project is their
@@ -22,241 +25,210 @@ Concretely, that means every feature should serve one of these:
    browser processes, here's why memory looks full).
 2. **Explain *why*** — not just "CPU is at 40%," but "here's what's
    consuming it and what that means." Task Manager shows data; this tool
-   should show understanding.
+   shows understanding.
 3. **Give the user real control** — clear, safe, reversible ways to act on
-   what they've learned (disable a startup item, stop a background
-   service), not just a read-only report.
+   what they've learned, not just a read-only report.
 4. **Suggest concrete optimizations** — proactive, specific, and honest
    about tradeoffs, not vague "clean your PC!" advice.
 
 When a feature could go in a "flashier but shallower" direction or a
 "less flashy but genuinely explains the machine" direction, prefer the
-latter — that's the actual value proposition of this whole project.
+latter. When data can't be determined reliably (USB port type, exact
+browser tab identity, webcam built-in status, CPU temperature without
+elevation), say so honestly rather than guessing — this has been a
+consistent, deliberate standard throughout the project and should continue.
 
-## Goal (in priority order)
-1. ~~Show live system stats (CPU, RAM, disk, network) in a clean local
-   dashboard.~~ **Done.**
-2. ~~Audit startup programs and background services, explain what each one
-   does, and estimate its impact.~~ **Done.**
-3. ~~Full live process list, sortable, with real day-to-day usability as a
-   Task Manager alternative.~~ **Done.**
-4. ~~Process grouping/tree view + process role labeling, so a browser or
-   editor's many child processes read as one coherent app instead of
-   anonymous rows.~~ **Done.**
-5. ~~"Why is it slow" diagnostic engine.~~ **Done.**
-6. ~~Process termination ("End Task"), with a hardcoded protected-process
-   list and confirmation flow.~~ **Done.**
-7. Score overall "optimization health" and generate a short report with
-   concrete suggestions the user can choose to act on. **Not yet built.**
-8. (Stretch) Historical trend tracking. (Stretch) Disk space treemap.
-   (Stretch) Scheduled Tasks audit. (Future, needs explicit scoping
-   discussion first — see safety rules) Bloatware/service management
-   (disable/enable, not uninstall).
+## What's built (v1)
 
-This is a **portfolio project**, but it has also become the person's actual
-daily driver for checking resource usage — treat real-world usability,
-performance of the live views, and data accuracy as seriously as you would
-code quality and structure.
+**Live overview**
+- CPU/RAM/disk/network stats with gauge-dial UI (`system_stats.py`)
+- Diagnostics popup: rules-based "why is it slow" signatures — cpu_dominance,
+  memory_pressure, disk_bound — each naming the specific responsible
+  process/group, with an empty state ("Nothing unusual detected") rather
+  than always finding something to say (`diagnostics.py`)
+- Specs popup: static hardware/OS info via wmi, queried once and cached
+  (`system_specs.py`)
+- Devices popup: USB peripherals, keyboards, displays, with built-in/
+  external labeling, deduplication of multi-interface devices, and honest
+  fallback for anything unrecognized (`device_inventory.py`,
+  `known_devices.py`)
+
+**Process Manager**
+- Full process enumeration with live CPU%/memory (`process_list.py`)
+- Grouping via union-find: real parent-child ancestry clusters (e.g.
+  browser renderer/GPU/utility processes) vs. an honestly-labeled
+  shared-name-only fallback bucket (e.g. `svchost.exe (Group)`) — never
+  implies a false relationship
+- Process role labeling via command-line parsing (GPU Process, Tab Content
+  Process, Extension Host, etc.)
+- Sortable columns, live search
+- Process termination ("End Task"): hardcoded protected-process list
+  (checked before any OS call is attempted), individual-process-only
+  scope, confirmation dialog, graceful-then-forceful termination, local
+  action logging (`process_control.py`)
+
+**Startup & Services Audit**
+- Registry Run/RunOnce, Startup folder, and services via wmi
+  (`startup_audit.py`)
+- Known-software lookup: plain-English descriptions + impact ratings,
+  honest silence for unmatched software (`known_software.py`)
+- Orphaned entry detection (registry entry exists but the target
+  executable no longer does) — impact rating correctly suppressed for
+  these, since a nonexistent program has no real resource cost
+- True enabled/disabled state via the `StartupApproved` registry key
+  (undocumented Windows internals, same caveat class as other
+  low-level Windows behavior this project reads) — this is what Task
+  Manager's own "Disable" button actually writes to; it does NOT remove
+  the underlying Run key, which is why naive key-presence checks report
+  the wrong state
+- Sortable columns, live search (feature parity with Process Manager)
+
+**Daily usability / release infra**
+- Cyberpunk "exposed mechanism" visual theme throughout (gunmetal/chrome,
+  cyan+magenta neon, gauge dials, jeweled status dots, Orbitron/Rajdhani +
+  monospace)
+- Resizable panels; Process Manager ordered before Startup Audit
+- Single-instance enforcement via a named Windows mutex — accidental
+  duplicate launches are a no-op, not a resource-competing second server
+- `launch.vbs` one-click launcher (no console window, no terminal needed)
+- MIT licensed, public-release README, security/privacy audit completed
+  (no personal data in code, fixtures, or git history as of that audit —
+  re-check if a long time has passed or significant new collectors have
+  been added since)
 
 ## Tech stack
 - **Language:** Python 3.11+
-- **System data:** `psutil` for cross-platform stats and process
-  enumeration; `pywin32` / `wmi` for Windows-specific data (services,
-  startup registry keys, Task Scheduler).
-- **Backend:** FastAPI, serving both JSON APIs and the static frontend.
-- **Frontend:** plain HTML/CSS/JS + Chart.js (via CDN). No frontend build
-  step — keep this simple to run and simple to demo. Visual theme is an
-  intentional "cyberpunk exposed-mechanism" identity (gunmetal/chrome
-  surfaces, cyan + magenta neon, gauge-dial stat displays, jeweled status
-  dots for enabled/impact states, Orbitron/Rajdhani display font + monospace
-  for data). Keep new UI consistent with this theme rather than reverting
-  to generic dashboard styling.
-- **Storage:** SQLite for historical snapshots, once we reach that feature.
-- **Tests:** `pytest`. Collectors should be unit-testable independent of the
-  API/UI — mock `psutil`/`wmi` rather than requiring real system access.
+- **System data:** `psutil` (cross-platform stats, process enumeration);
+  `pywin32`/`wmi` (Windows-specific: services, startup registry, devices,
+  specs)
+- **Backend:** FastAPI. Routes are thin — call a collector, shape the
+  response, no business logic in route handlers.
+- **Frontend:** plain HTML/CSS/JS + Chart.js via CDN. No build step.
+- **Storage:** none yet (v2 historical tracking would introduce SQLite)
+- **Tests:** `pytest`, mocking `psutil`/`wmi` — no real system access
+  required to run the suite
 
 ## Non-negotiable safety rules
-- **Read-only by default.** Nothing in this codebase should delete files,
-  modify the registry, disable services, or uninstall software without an
-  explicit, separate "apply" action the user triggers — and even then, log
-  what changed and make it easy to undo.
-- **Process termination ("End Task") is now in scope, explicitly requested
-  by the user, with strict guardrails:**
-  - Maintain a hardcoded, conservative list of protected system processes
-    (e.g. System, System Idle Process, csrss.exe, wininit.exe,
-    services.exe, lsass.exe, smss.exe, winlogon.exe) that cannot be
-    terminated through the app under any circumstances — not just warned
-    about, actually blocked.
-  - Only individual processes can be terminated, never a collapsed
-    group row — the user must be looking at the specific PID being acted
-    on.
-  - Always require explicit confirmation showing exactly what will be
-    terminated (name, PID, memory) before acting.
-  - Attempt graceful termination first, fall back to forceful kill only
-    after a short timeout if the process doesn't respond.
-  - Log every termination attempt (what, when, outcome) — this is the
-    first destructive action in the app, so this is the first place the
-    existing "log what changed" rule actually needs to be implemented.
-  - Handle permission errors gracefully (many processes need elevated
-    rights to terminate) — never crash, always explain clearly.
-  - Still out of scope, not requested: uninstalling software, deleting
-    files, modifying the registry, disabling services. Do not add these
-    unless separately, explicitly requested.
-- Never claim a suggestion is 100% safe. Phrase things as recommendations
-  with the reasoning shown, not commands.
-- No telemetry, no phoning home, no bundled third-party analytics.
-  Everything runs and stays local.
-- Since this is now used as a real day-to-day tool, don't let live polling
-  (process list, stats) become a resource hog itself — that would be an
+- **Read-only by default.** Nothing deletes files, modifies the registry,
+  disables services, or uninstalls software without an explicit, separate
+  "apply" action — and even then, log what changed and make it reversible.
+- **Process termination is the one implemented exception, with strict,
+  already-built guardrails — do not weaken these:**
+  - Hardcoded protected-process list (see `process_control.py`), checked
+    before any termination attempt, not relied on as a fallback after an
+    OS-level refusal.
+  - Individual processes only — never a collapsed group row.
+  - Explicit confirmation showing name/PID/memory before acting.
+  - Graceful termination attempted first, forceful kill only as a timed
+    fallback.
+  - Every attempt logged locally.
+- **Future destructive actions (startup/service disable-enable,
+  uninstall, file deletion) are still out of scope** until separately,
+  explicitly requested and scoped the same deliberate way End Task was —
+  do not add these speculatively.
+- No telemetry, no phoning home, no third-party analytics. Fully local.
+- Don't let live polling become a resource hog itself — that would be an
   ironic failure for a PC-health tool. Be deliberate about polling
-  intervals and avoid re-enumerating more than necessary.
+  intervals; the Devices panel specifically does NOT poll continuously
+  (fetch-on-open + manual refresh only) because its WMI queries are
+  comparatively heavy.
+
+## Known, accepted issues (don't re-litigate from scratch — read this first)
+- **Devices panel occasional empty results under heavy concurrent load.**
+  Root cause: WMI device queries contend with the 2s stats/process/
+  diagnostics polling for thread pool availability. A real leak in timeout
+  cleanup was found and fixed; the underlying contention is accepted for
+  now. If this becomes a frequent practical problem, the real fix is
+  likely isolating heavy WMI calls onto a dedicated worker rather than
+  sharing FastAPI's default thread pool with the frequent-polling
+  endpoints — don't re-chase the pythonw/COM theories already ruled out.
+- **CPU% differs from Task Manager's number.** This is expected, not a
+  bug — Task Manager (Win10+) uses a frequency-scaling-aware "CPU
+  utility" metric; this project uses `psutil`'s standard raw busy-time
+  metric. Documented in the README; not planned to be changed unless the
+  user asks to specifically match Task Manager's methodology.
+- **USB port type (A/C) is not reported.** Not available via standard
+  Windows device APIs — deliberately omitted rather than guessed.
+- **Webcam built-in status is best-effort only.** `LocationInformation`
+  isn't consistently populated by all manufacturers; left blank when
+  unreliable rather than assumed.
 
 ## Code conventions
-- Type hints on all function signatures.
-- Docstrings on public functions/classes (one-line summary is fine for
-  small ones).
-- Collectors (things that gather system data) live in `src/collectors/` and
-  return plain dataclasses/dicts — no printing, no UI logic inside them.
-- API routes in `src/api/` should be thin: call a collector, shape the
-  response, return it. Business logic doesn't belong in route handlers.
-- Prefer small, composable functions over large ones.
-- Keep the frontend dependency-free beyond Chart.js from CDN — no npm
-  build step.
+- Type hints on all function signatures; docstrings on public functions/
+  classes.
+- Collectors (`src/collectors/`) return plain dataclasses/dicts, no
+  printing, no UI logic.
+- API routes thin; business logic lives in collectors.
+- Mock `psutil`/`wmi` in tests rather than requiring real system access.
+- Keep the frontend dependency-free beyond Chart.js — no npm build step.
+- `psutil.Process.cpu_percent()` needs a priming call before it's
+  meaningful — use a persistent process cache across polls, not fresh
+  `Process` objects each time.
+- Prefer correctness and stable performance over cleverness for anything
+  polled live — this is a real daily-use tool now, not just a demo.
 
 ## Folder structure
 ```
 pc-health-dashboard/
 ├── CLAUDE.md
 ├── README.md
+├── LICENSE
 ├── requirements.txt
+├── launch.vbs                 # one-click launcher, no console window
 ├── src/
-│   ├── main.py                # entrypoint: starts the FastAPI server
-│   ├── collectors/            # system data gathering, no UI/API concerns
-│   │   ├── system_stats.py    # CPU/RAM/disk/network via psutil
-│   │   ├── startup_audit.py   # startup/service audit; orphan detection;
-│   │   │                      # true StartupApproved enabled state
-│   │   ├── known_software.py  # bloatware/telemetry lookup + descriptions
-│   │   ├── process_list.py    # process enumeration, grouping (union-find),
-│   │   │                      # role labeling via cmdline parsing, live
-│   │   │                      # CPU/memory usage
-│   │   ├── process_control.py # process termination: protected-process
-│   │   │                      # list, graceful->forceful terminate, logging
-│   │   ├── diagnostics.py     # rules-based "why is it slow" signatures
-│   │   │                      # (cpu_dominance, memory_pressure, disk_bound)
-│   │   └── system_specs.py    # static hardware/OS specs (CPU, RAM, GPU,
-│   │                          # storage, motherboard) via wmi, cached once
+│   ├── main.py                # entrypoint; single-instance mutex; starts uvicorn
+│   ├── collectors/
+│   │   ├── system_stats.py
+│   │   ├── startup_audit.py
+│   │   ├── known_software.py
+│   │   ├── process_list.py
+│   │   ├── process_control.py
+│   │   ├── diagnostics.py
+│   │   ├── system_specs.py
+│   │   ├── device_inventory.py
+│   │   └── known_devices.py
 │   ├── api/
-│   │   └── server.py          # FastAPI app + routes
-│   └── web/                   # static frontend (HTML/CSS/JS)
+│   │   └── server.py
+│   └── web/                   # HTML/CSS/JS, cyberpunk theme
 └── tests/
 ```
 
-## Current status
-Feature-complete v1+ and verified in-browser on the user's real machine
-throughout. Working: live stats (gauge dials), full startup/service audit
-(known-software lookup, orphan detection, true StartupApproved enabled
-state, search, sort), Process Manager (grouping/tree view, role labeling,
-search, sort), a collapsible Diagnostics popup ("why is it slow"), a
-collapsible Specs popup (static hardware info), resizable panels, and
-process termination ("End Task") with a hardcoded protected-process list.
-A Devices popup (connected USB peripherals, keyboards, monitors — built-in
-vs. external) rounds out the hardware picture alongside Specs. Single-
-instance enforcement (a named Windows mutex in `src/main.py`, with a
-port-bind fallback check) plus a `launch.vbs` one-click launcher — see
-"How to run" below — mean the dashboard no longer requires a terminal for
-day-to-day use. Cyberpunk visual theme applied throughout. Security/privacy
-audit of the repo has been done (no personal data leaked in code, history,
-or fixtures — see git history for details if unsure).
-
-**Not yet built:** optimization score/report, top-offenders leaderboard,
-historical trend tracking, disk treemap, Scheduled Tasks audit, bloatware/
-service disable-enable management, correlating startup/service items with
-their live process data.
-
-## Roadmap (rough order of work)
-1. ~~System stats collector + endpoint + live gauge dials.~~ Done.
-2. ~~Startup/service audit (registry, startup folder, services via wmi).~~ Done.
-3. ~~Known-software lookup table for plain-English descriptions/impact.~~ Done.
-4. ~~Cyberpunk visual theme.~~ Done.
-5. ~~Full process list collector + `/api/processes` + Process Manager
-   view.~~ Done. (~1s response for ~285 processes accepted as the
-   practical floor for a psutil-based approach; a raw
-   `NtQuerySystemInformation`/`ctypes` rewrite was considered and
-   deliberately deferred.)
-6. ~~Process grouping/tree view (union-find on parent-child + shared-name
-   fallback) + process role labeling via cmdline parsing.~~ Done. This
-   directly answers "why is memory full when I only have one YouTube tab
-   open."
-7. ~~Sortable columns + search on both Process Manager and Startup &
-   Services Audit (feature parity between the two).~~ Done.
-8. ~~"Why is it slow" diagnostic engine — cpu_dominance, memory_pressure,
-   disk_bound signatures, collapsible popup UI.~~ Done.
-9. ~~Orphaned startup-entry detection + true StartupApproved-based enabled
-   state (fixes Task Manager-disabled items showing as "Enabled").~~ Done.
-10. ~~Specs popup (CPU/RAM/GPU/storage/motherboard/OS via wmi, cached
-    once).~~ Done.
-11. ~~Resizable panels + layout reorder (Process Manager before Startup
-    Audit) + collapsible Diagnostics/Specs pills instead of a persistent
-    banner.~~ Done.
-12. ~~Process termination ("End Task") — hardcoded protected-process list,
-    individual-process-only, confirm dialog, graceful->forceful, logged.~~
-    Done.
-13. **Correlate startup/service audit items with live process data** —
-    reuse Process Manager's data to show real-time CPU/memory next to each
-    startup/service entry, not just its static impact estimate. Not yet
-    built, still a real gap.
-14. **Top offenders leaderboard** — top CPU/memory consumers sampled over
-    a rolling window, not just instantaneous.
-15. **Broader background-noise classification** — extend
-    `known_software.py`'s concept to categorize *all* running processes
-    (OS-critical / user app / browser-renderer / background-updater /
-    telemetry), not just startup items.
-16. **Bloatware/service management (action layer)** — safe, reversible
-    disable/enable controls for startup items and user-installed services,
-    with confirmation previews and a change log. Needs its own scoping
-    discussion before building (similar to how End Task was scoped) —
-    don't build without that discussion happening first.
-17. Optimization score + report, synthesizing the diagnostic engine's
-    findings into an overall picture.
-18. ~~Single-instance enforcement (named Windows mutex + port-bind
-    fallback in `src/main.py`) + `launch.vbs` one-click launcher
-    (background start via `pythonw.exe`, then opens the default
-    browser).~~ Done. Resolves the previously-undecided "how to launch
-    without a terminal" question — see README's "One-click launch"
-    section.
-19. Stretch: historical trend tracking, disk treemap, Scheduled Tasks
-    audit.
-
 ## How to run
+`launch.vbs` for normal use (see README). For development:
 ```
 pip install -r requirements.txt
 python -m src.main
 ```
-Then open http://localhost:8000 in a browser.
+
+## Roadmap (v2 — not yet built, ordered roughly by value)
+1. **Correlate startup/service audit entries with live process data** —
+   reuse Process Manager's data to show real-time CPU/memory next to each
+   startup/service entry instead of just a static impact estimate. Highest-
+   value remaining item; ties the two core tables together.
+2. **Top offenders leaderboard** — top CPU/memory consumers over a rolling
+   window, not just instantaneous.
+3. **Broader background-noise classification** — extend
+   `known_software.py`'s concept to categorize *all* running processes,
+   not just startup items.
+4. **Bloatware/service management (action layer)** — safe, reversible
+   disable/enable for startup items and user-installed services. Needs its
+   own explicit scoping discussion before building, same as End Task did —
+   do not build without that conversation happening first.
+5. **Optimization score/report** synthesizing the diagnostic engine's
+   findings.
+6. Stretch: historical trend tracking (would introduce SQLite), disk space
+   treemap, Scheduled Tasks audit, optional CPU/GPU temperature (needs an
+   explicit admin-elevation or vendor-SDK tradeoff decision first).
 
 ## Notes for Claude Code
-- When adding a new collector, add a matching test in `tests/` using mocked
-  `psutil`/`wmi` calls — don't require actual system access for tests to pass.
-- If a feature needs elevated (admin) privileges, say so clearly in code
-  comments and handle the permission-denied case gracefully instead of
-  crashing.
-- Ask before adding new third-party dependencies beyond what's already in
-  `requirements.txt` — keep the dependency footprint deliberate.
-- `psutil.Process.cpu_percent()` returns 0/garbage on its first call for a
-  given process — it needs a prior "priming" call before the value is
-  meaningful. Handle this properly (e.g. a persistent process cache across
-  polls) rather than reporting misleading first-read numbers.
-- Since this now needs to hold up as a real daily-use tool, prefer
-  correctness and stable performance over cleverness — e.g. avoid
-  re-creating `psutil.Process` objects every single poll if a cached
-  approach is more efficient, and profile if a feature feels sluggish
-  rather than assuming it's fine.
-
-Known limitation: the Devices popup can occasionally return empty results
-under heavy concurrent polling load (WMI device queries contend with the
-2s stats/process/diagnostics polling for server thread pool availability).
-A genuine leak in timeout cleanup was fixed, but the underlying contention
-is an accepted, documented tradeoff for now, not fully resolved. If this
-becomes a frequent real problem in daily use, the real fix is likely
-isolating heavy WMI calls onto a dedicated worker rather than sharing
-FastAPI's default thread pool with the frequent-polling endpoints.
+- Before starting new work, check "Known, accepted issues" above — several
+  theories have already been tried and ruled out; don't re-derive them
+  from scratch.
+- If a feature needs elevated (admin) privileges, say so clearly and
+  handle the permission-denied case gracefully.
+- Ask before adding new third-party dependencies.
+- This project has a strong, established pattern: verify claims against
+  the user's real machine (not just mocked tests) before declaring
+  something fixed, and be honest in the summary about what was actually
+  confirmed vs. assumed. Keep doing this — it's caught multiple real bugs
+  that passing tests alone would have missed.
