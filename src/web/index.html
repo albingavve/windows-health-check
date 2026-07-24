@@ -84,13 +84,13 @@
       </div>
       <p class="muted-note" id="process-count"></p>
       <div class="table-scroll">
-        <table class="startup-table">
+        <table class="startup-table" id="process-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>PID</th>
-              <th>CPU %</th>
-              <th>Memory</th>
+              <th class="sortable" data-sort-key="name">Name<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort-key="pid">PID<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort-key="cpu">CPU %<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort-key="memory">Memory<span class="sort-arrow"></span></th>
             </tr>
           </thead>
           <tbody id="process-table-body">

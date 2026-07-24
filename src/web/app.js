@@ -325,6 +325,65 @@ loadStartupAudit();
 let processGroups = [];
 const expandedProcessGroups = new Set();
 
+// Sorting applies to the top-level grouped rows only, using each group's
+// own label/count/summed values — expanded member rows always stay
+// attached to their parent group rather than being resorted independently.
+const PROCESS_SORT_ACCESSORS = {
+  name: (group) => group.label.toLowerCase(),
+  pid: (group) => (group.process_count === 1 ? group.members[0].pid : group.process_count),
+  cpu: (group) => group.total_cpu_percent,
+  memory: (group) => group.total_memory_mb,
+};
+const PROCESS_SORT_DEFAULT_DIRECTION = {
+  name: "asc",
+  pid: "asc",
+  cpu: "desc",
+  memory: "desc",
+};
+
+let processSortKey = "memory";
+let processSortDirection = "desc";
+
+function sortProcessGroups(groups) {
+  const accessor = PROCESS_SORT_ACCESSORS[processSortKey];
+  const sorted = [...groups].sort((a, b) => {
+    const valueA = accessor(a);
+    const valueB = accessor(b);
+    if (valueA < valueB) return -1;
+    if (valueA > valueB) return 1;
+    return 0;
+  });
+  if (processSortDirection === "desc") sorted.reverse();
+  return sorted;
+}
+
+function updateProcessSortIndicators() {
+  document.querySelectorAll("#process-table th.sortable").forEach((th) => {
+    const arrow = th.querySelector(".sort-arrow");
+    if (th.dataset.sortKey === processSortKey) {
+      arrow.textContent = processSortDirection === "asc" ? "▲" : "▼";
+    } else {
+      arrow.textContent = "";
+    }
+  });
+}
+
+document.querySelectorAll("#process-table th.sortable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.sortKey;
+    if (processSortKey === key) {
+      processSortDirection = processSortDirection === "asc" ? "desc" : "asc";
+    } else {
+      processSortKey = key;
+      processSortDirection = PROCESS_SORT_DEFAULT_DIRECTION[key];
+    }
+    updateProcessSortIndicators();
+    renderProcessTable(processGroups);
+  });
+});
+
+updateProcessSortIndicators();
+
 function toggleProcessGroup(label) {
   if (expandedProcessGroups.has(label)) {
     expandedProcessGroups.delete(label);
@@ -341,6 +400,14 @@ function buildProcessMemberRow(member) {
   const nameTd = document.createElement("td");
   nameTd.className = "process-member-name";
   nameTd.textContent = member.name;
+  if (member.role) {
+    // Identifies process *role* (GPU/utility/renderer/...), not which tab
+    // or site a renderer belongs to — psutil can't see that far.
+    const role = document.createElement("p");
+    role.className = "known-description";
+    role.textContent = member.role;
+    nameTd.appendChild(role);
+  }
   tr.appendChild(nameTd);
 
   const pidTd = document.createElement("td");
@@ -436,7 +503,7 @@ function renderProcessTable(groups) {
 
   const fragment = document.createDocumentFragment();
   let totalProcesses = 0;
-  for (const group of groups) {
+  for (const group of sortProcessGroups(groups)) {
     totalProcesses += group.process_count;
     if (group.process_count === 1) {
       fragment.appendChild(buildProcessSingleRow(group));
