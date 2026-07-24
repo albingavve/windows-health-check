@@ -3,10 +3,10 @@
 Implemented data sources:
 - Startup folder(s): shell:startup and shell:common startup
 - Registry Run/RunOnce keys (HKCU and HKLM, via `winreg`)
+- Services and their startup type (via `wmi`)
 
 Not yet implemented (planned next):
 - Scheduled Tasks that run at logon (via `pywin32` or `schtasks` output)
-- Running services and their startup type (via `wmi` or `pywin32`)
 
 Each finding maps to a StartupItem so the API/UI layer doesn't need to know
 where the data came from.
@@ -14,11 +14,14 @@ where the data came from.
 
 import os
 import winreg
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 
+import pythoncom
 import win32com.client
+import wmi
 
 
 class StartupSource(str, Enum):
@@ -52,6 +55,21 @@ _REGISTRY_RUN_KEYS = [
 ]
 
 
+@contextmanager
+def _com_initialized():
+    """Ensure COM is initialized on the calling thread.
+
+    FastAPI runs sync route handlers in a worker thread pool, and those
+    threads don't have COM initialized by default — win32com/wmi calls fail
+    with "CoInitialize has not been called" unless we do this per call.
+    """
+    pythoncom.CoInitialize()
+    try:
+        yield
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def _resolve_shortcut(path: Path) -> str:
     """Resolve a .lnk file to its target path + arguments.
 
@@ -59,12 +77,13 @@ def _resolve_shortcut(path: Path) -> str:
     (e.g. a malformed shortcut).
     """
     try:
-        shell = win32com.client.Dispatch("WScript.Shell")
-        shortcut = shell.CreateShortCut(str(path))
-        target = shortcut.Targetpath
-        if not target:
-            return str(path)
-        return f"{target} {shortcut.Arguments}".strip()
+        with _com_initialized():
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(str(path))
+            target = shortcut.Targetpath
+            if not target:
+                return str(path)
+            return f"{target} {shortcut.Arguments}".strip()
     except Exception:
         return str(path)
 
@@ -121,10 +140,36 @@ def _scan_registry_run_keys() -> list[StartupItem]:
     return items
 
 
+def _scan_services() -> list[StartupItem]:
+    """Return startup items for every registered Windows service.
+
+    `enabled` reflects the service's startup type (`StartMode == "Auto"`):
+    services set to Manual/Disabled don't run automatically at boot, even
+    though they're still registered.
+    """
+    try:
+        with _com_initialized():
+            connection = wmi.WMI()
+            services = connection.Win32_Service()
+            return [
+                StartupItem(
+                    name=service.DisplayName or service.Name,
+                    source=StartupSource.SERVICE,
+                    command=service.PathName or "",
+                    enabled=service.StartMode == "Auto",
+                )
+                for service in services
+            ]
+    except Exception:
+        # WMI can be unavailable (e.g. service disabled, COM init issues) —
+        # degrade to no results rather than crashing the whole audit.
+        return []
+
+
 def get_startup_items() -> list[StartupItem]:
     """Return all discovered startup items across the implemented sources.
 
-    TODO: add Services and Scheduled Tasks sources.
+    TODO: add Scheduled Tasks source.
     """
     user_startup = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     common_startup = Path(os.environ["PROGRAMDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
@@ -133,4 +178,5 @@ def get_startup_items() -> list[StartupItem]:
         *_scan_startup_folder(user_startup),
         *_scan_startup_folder(common_startup),
         *_scan_registry_run_keys(),
+        *_scan_services(),
     ]

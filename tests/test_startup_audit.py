@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from src.collectors.startup_audit import (
     StartupSource,
     _scan_registry_run_keys,
+    _scan_services,
     _scan_startup_folder,
     get_startup_items,
 )
@@ -100,9 +101,47 @@ def test_get_startup_items_combines_all_sources(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(appdata))
     monkeypatch.setenv("PROGRAMDATA", str(programdata))
 
-    with patch("src.collectors.startup_audit._scan_registry_run_keys", return_value=[]):
+    with patch("src.collectors.startup_audit._scan_registry_run_keys", return_value=[]), patch(
+        "src.collectors.startup_audit._scan_services", return_value=[]
+    ):
         items = get_startup_items()
 
     names = {item.name for item in items}
     assert names == {"UserApp", "CommonApp"}
     assert all(item.source == StartupSource.STARTUP_FOLDER for item in items)
+
+
+def test_scan_services_maps_fields_and_start_mode_to_enabled():
+    auto_service = MagicMock(
+        DisplayName="Windows Update",
+        Name="wuauserv",
+        PathName=r"C:\WINDOWS\system32\svchost.exe -k netsvcs",
+        StartMode="Auto",
+    )
+    manual_service = MagicMock(
+        DisplayName="",
+        Name="SomeManualSvc",
+        PathName=r"C:\WINDOWS\system32\some.exe",
+        StartMode="Manual",
+    )
+
+    fake_connection = MagicMock()
+    fake_connection.Win32_Service.return_value = [auto_service, manual_service]
+
+    with patch("src.collectors.startup_audit.wmi.WMI", return_value=fake_connection):
+        items = _scan_services()
+
+    assert len(items) == 2
+    assert all(item.source == StartupSource.SERVICE for item in items)
+
+    update_item = next(i for i in items if i.name == "Windows Update")
+    assert update_item.command == r"C:\WINDOWS\system32\svchost.exe -k netsvcs"
+    assert update_item.enabled is True
+
+    manual_item = next(i for i in items if i.name == "SomeManualSvc")
+    assert manual_item.enabled is False
+
+
+def test_scan_services_returns_empty_list_on_wmi_failure():
+    with patch("src.collectors.startup_audit.wmi.WMI", side_effect=Exception("WMI unavailable")):
+        assert _scan_services() == []
