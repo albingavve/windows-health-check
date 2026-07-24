@@ -7,6 +7,8 @@ venv/
 .pytest_cache/
 *.db
 *.sqlite3
+*.log
 .vscode/
 .idea/
 .DS_Store
+.claude/

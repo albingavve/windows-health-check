@@ -17,23 +17,48 @@
     <p class="subtitle">Live system stats — updates every 2 seconds</p>
   </header>
 
-  <div
-    id="diagnostics-indicator"
-    class="diagnostics-indicator"
-    role="button"
-    tabindex="0"
-    aria-expanded="false"
-    aria-controls="diagnostics-popup"
-  >
-    <span class="diagnostics-indicator-dot dot-neutral" id="diagnostics-indicator-dot"></span>
-    <span class="diagnostics-indicator-label">Diagnostics</span>
-    <span class="diagnostics-indicator-chevron">▾</span>
+  <div class="hud-indicator-row">
+    <div
+      id="specs-indicator"
+      class="hud-indicator"
+      role="button"
+      tabindex="0"
+      aria-expanded="false"
+      aria-controls="specs-popup"
+    >
+      <span class="hud-indicator-dot dot-neutral"></span>
+      <span class="hud-indicator-label">Specs</span>
+      <span class="hud-indicator-chevron">▾</span>
+    </div>
+
+    <div
+      id="diagnostics-indicator"
+      class="hud-indicator"
+      role="button"
+      tabindex="0"
+      aria-expanded="false"
+      aria-controls="diagnostics-popup"
+    >
+      <span class="hud-indicator-dot dot-neutral" id="diagnostics-indicator-dot"></span>
+      <span class="hud-indicator-label">Diagnostics</span>
+      <span class="hud-indicator-chevron">▾</span>
+    </div>
   </div>
 
-  <div id="diagnostics-popup" class="diagnostics-popup" hidden>
+  <div id="specs-popup" class="hud-popup" hidden>
+    <div class="startup-audit-header">
+      <h2>System Specs</h2>
+      <button type="button" id="specs-close" class="hud-popup-close" aria-label="Close specs">✕</button>
+    </div>
+    <div id="specs-list" class="specs-list">
+      <p class="muted-note">Loading…</p>
+    </div>
+  </div>
+
+  <div id="diagnostics-popup" class="hud-popup" hidden>
     <div class="startup-audit-header">
       <h2>Diagnostics — Why Is It Slow?</h2>
-      <button type="button" id="diagnostics-close" class="diagnostics-close" aria-label="Close diagnostics">✕</button>
+      <button type="button" id="diagnostics-close" class="hud-popup-close" aria-label="Close diagnostics">✕</button>
     </div>
     <div id="diagnostics-list" class="diagnostics-list">
       <p class="muted-note">Loading…</p>
@@ -89,10 +114,11 @@
               <th class="sortable" data-sort-key="pid">PID<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort-key="cpu">CPU %<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort-key="memory">Memory<span class="sort-arrow"></span></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="process-table-body">
-            <tr><td colspan="4" class="muted-note">Loading…</td></tr>
+            <tr><td colspan="5" class="muted-note">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -130,6 +156,19 @@
       </div>
     </div>
   </section>
+
+  <div id="confirm-modal-overlay" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2 class="modal-title">End Task?</h2>
+      <p class="modal-body" id="confirm-modal-body"></p>
+      <div class="modal-actions">
+        <button type="button" id="confirm-modal-cancel" class="modal-btn modal-btn-cancel">Cancel</button>
+        <button type="button" id="confirm-modal-confirm" class="modal-btn modal-btn-danger">End Task</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
 
   <script src="/assets/app.js"></script>
 </body>

@@ -396,11 +396,18 @@ h1 {
   box-shadow: 0 0 5px 1px var(--jewel-ruby);
 }
 
-.diagnostics-indicator {
+/* Shared "HUD pill that expands into a popup" pattern — used by both the
+   Specs and Diagnostics indicators, fixed top-right as a matched set. */
+.hud-indicator-row {
   position: fixed;
   top: 18px;
   right: 24px;
   z-index: 50;
+  display: flex;
+  gap: 10px;
+}
+
+.hud-indicator {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -416,48 +423,51 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-.diagnostics-indicator:hover,
-.diagnostics-indicator.is-expanded {
+.hud-indicator:hover,
+.hud-indicator.is-expanded {
   border-color: var(--glow-cyan);
   color: var(--glow-cyan);
 }
 
-.diagnostics-indicator:focus-visible {
+.hud-indicator:focus-visible {
   outline: 1px solid var(--glow-cyan);
   outline-offset: 2px;
 }
 
-.diagnostics-indicator-dot {
+.hud-indicator-dot {
   flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
 }
 
-.diagnostics-indicator-dot.dot-neutral {
+.hud-indicator-dot.dot-neutral {
   background: var(--jewel-off);
 }
 
-.diagnostics-indicator-dot.dot-info {
+.hud-indicator-dot.dot-info {
   background: var(--jewel-sapphire);
   box-shadow: 0 0 5px 1px var(--jewel-sapphire);
 }
 
-.diagnostics-indicator-dot.dot-warning {
+.hud-indicator-dot.dot-warning {
   background: var(--jewel-ruby);
   box-shadow: 0 0 5px 1px var(--jewel-ruby);
 }
 
-.diagnostics-indicator-chevron {
+.hud-indicator-chevron {
   display: inline-block;
   transition: transform 150ms ease;
 }
 
-.diagnostics-indicator.is-expanded .diagnostics-indicator-chevron {
+.hud-indicator.is-expanded .hud-indicator-chevron {
   transform: rotate(180deg);
 }
 
-.diagnostics-popup {
+/* Both popups share this position — never shown simultaneously (see
+   makeHudPopup()'s mutual-exclusion behavior in app.js), so there's no
+   need to offset one from the other. */
+.hud-popup {
   position: fixed;
   top: 56px;
   right: 24px;
@@ -471,11 +481,11 @@ h1 {
   padding: 16px 18px;
 }
 
-.diagnostics-popup .startup-audit-header {
+.hud-popup .startup-audit-header {
   margin-bottom: 10px;
 }
 
-.diagnostics-close {
+.hud-popup-close {
   background: none;
   border: 1px solid var(--chrome-border);
   color: var(--muted);
@@ -485,9 +495,42 @@ h1 {
   font-size: 0.8rem;
 }
 
-.diagnostics-close:hover {
+.hud-popup-close:hover {
   color: var(--glow-magenta);
   border-color: var(--glow-magenta);
+}
+
+.specs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spec-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--chrome-border);
+  font-size: 0.85rem;
+}
+
+.spec-row:last-child {
+  border-bottom: none;
+}
+
+.spec-label {
+  color: var(--muted);
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  padding-top: 1px;
+}
+
+.spec-value {
+  color: var(--text);
+  font-family: var(--font-mono);
 }
 
 .diagnostics-list {
@@ -621,5 +664,160 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   .value-flicker {
     animation: none;
+  }
+}
+
+.action-cell {
+  white-space: nowrap;
+}
+
+.end-task-btn {
+  background: none;
+  border: 1px solid var(--jewel-ruby);
+  color: var(--jewel-ruby);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.end-task-btn:hover {
+  background: var(--jewel-ruby);
+  color: var(--bg);
+}
+
+.end-task-btn:disabled {
+  border-color: var(--chrome-border);
+  color: var(--jewel-off);
+  cursor: not-allowed;
+}
+
+/* Confirmation modal — deliberately styled with warning coloring since
+   ending a process is the one non-reversible action in this app. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5, 7, 10, 0.72);
+}
+
+/* The `hidden` HTML attribute is hidden via a low-priority user-agent
+   stylesheet rule ([hidden] { display: none }), which any author rule
+   setting `display` on the same element overrides outright regardless of
+   specificity — so `display: flex` can't live on the bare `.modal-overlay`
+   selector above, or `hidden` stops working entirely. Scoping it to
+   :not([hidden]) keeps this rule from ever competing with that default. */
+.modal-overlay:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-card {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--card-bg);
+  border: 1px solid var(--jewel-ruby);
+  box-shadow: 0 0 24px rgba(201, 63, 74, 0.25), 0 12px 32px rgba(0, 0, 0, 0.5);
+  padding: 22px 24px;
+}
+
+.modal-title {
+  margin: 0 0 12px;
+  font-family: var(--font-header);
+  font-size: 1rem;
+  color: var(--jewel-ruby);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.modal-body {
+  margin: 0 0 20px;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-btn {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.modal-btn-cancel {
+  background: none;
+  border: 1px solid var(--chrome-border);
+  color: var(--chrome-text);
+}
+
+.modal-btn-cancel:hover {
+  border-color: var(--glow-cyan);
+  color: var(--glow-cyan);
+}
+
+.modal-btn-danger {
+  background: var(--jewel-ruby);
+  border: 1px solid var(--jewel-ruby);
+  color: var(--bg);
+}
+
+.modal-btn-danger:hover {
+  background: #e04b57;
+  border-color: #e04b57;
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 48px));
+}
+
+.toast {
+  background: var(--card-bg);
+  border: 1px solid var(--chrome-border);
+  border-left: 3px solid var(--jewel-off);
+  padding: 12px 16px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.toast.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.toast-success {
+  border-left-color: var(--jewel-emerald);
+}
+
+.toast.toast-error {
+  border-left-color: var(--jewel-ruby);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
   }
 }

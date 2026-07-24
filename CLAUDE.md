@@ -38,17 +38,20 @@ latter — that's the actual value proposition of this whole project.
    dashboard.~~ **Done.**
 2. ~~Audit startup programs and background services, explain what each one
    does, and estimate its impact.~~ **Done.**
-3. **Full live process list**, sortable by CPU%, memory, name, etc. — this
-   is the current focus. The goal is real day-to-day usability as a Task
-   Manager alternative, not a one-off demo table.
-4. Correlate startup/service audit entries with their live running process
-   (if any) so the audit table also shows real-time CPU/memory, not just
-   the static impact estimate.
-5. Score overall "optimization health" and generate a short report with
-   concrete suggestions the user can choose to act on.
-6. (Stretch) Historical trend tracking. (Stretch) Disk space treemap.
-   (Stretch) Scheduled Tasks audit. (Stretch, needs explicit sign-off before
-   building — see safety rules) Process termination ("End Task").
+3. ~~Full live process list, sortable, with real day-to-day usability as a
+   Task Manager alternative.~~ **Done.**
+4. ~~Process grouping/tree view + process role labeling, so a browser or
+   editor's many child processes read as one coherent app instead of
+   anonymous rows.~~ **Done.**
+5. ~~"Why is it slow" diagnostic engine.~~ **Done.**
+6. ~~Process termination ("End Task"), with a hardcoded protected-process
+   list and confirmation flow.~~ **Done.**
+7. Score overall "optimization health" and generate a short report with
+   concrete suggestions the user can choose to act on. **Not yet built.**
+8. (Stretch) Historical trend tracking. (Stretch) Disk space treemap.
+   (Stretch) Scheduled Tasks audit. (Future, needs explicit scoping
+   discussion first — see safety rules) Bloatware/service management
+   (disable/enable, not uninstall).
 
 This is a **portfolio project**, but it has also become the person's actual
 daily driver for checking resource usage — treat real-world usability,
@@ -74,12 +77,31 @@ code quality and structure.
 
 ## Non-negotiable safety rules
 - **Read-only by default.** Nothing in this codebase should delete files,
-  modify the registry, disable services, uninstall software, or **terminate
-  a running process** without an explicit, separate "apply" action the user
-  triggers — and even then, log what changed and make it easy to undo.
-  Process termination ("End Task") is *not yet in scope* — do not add it
-  unless the user explicitly asks for it in a future prompt, since it's a
-  meaningfully higher-risk action than anything built so far.
+  modify the registry, disable services, or uninstall software without an
+  explicit, separate "apply" action the user triggers — and even then, log
+  what changed and make it easy to undo.
+- **Process termination ("End Task") is now in scope, explicitly requested
+  by the user, with strict guardrails:**
+  - Maintain a hardcoded, conservative list of protected system processes
+    (e.g. System, System Idle Process, csrss.exe, wininit.exe,
+    services.exe, lsass.exe, smss.exe, winlogon.exe) that cannot be
+    terminated through the app under any circumstances — not just warned
+    about, actually blocked.
+  - Only individual processes can be terminated, never a collapsed
+    group row — the user must be looking at the specific PID being acted
+    on.
+  - Always require explicit confirmation showing exactly what will be
+    terminated (name, PID, memory) before acting.
+  - Attempt graceful termination first, fall back to forceful kill only
+    after a short timeout if the process doesn't respond.
+  - Log every termination attempt (what, when, outcome) — this is the
+    first destructive action in the app, so this is the first place the
+    existing "log what changed" rule actually needs to be implemented.
+  - Handle permission errors gracefully (many processes need elevated
+    rights to terminate) — never crash, always explain clearly.
+  - Still out of scope, not requested: uninstalling software, deleting
+    files, modifying the registry, disabling services. Do not add these
+    unless separately, explicitly requested.
 - Never claim a suggestion is 100% safe. Phrase things as recommendations
   with the reasoning shown, not commands.
 - No telemetry, no phoning home, no bundled third-party analytics.
@@ -111,12 +133,18 @@ pc-health-dashboard/
 │   ├── main.py                # entrypoint: starts the FastAPI server
 │   ├── collectors/            # system data gathering, no UI/API concerns
 │   │   ├── system_stats.py    # CPU/RAM/disk/network via psutil
-│   │   ├── startup_audit.py   # startup programs/services (Windows-specific)
+│   │   ├── startup_audit.py   # startup/service audit; orphan detection;
+│   │   │                      # true StartupApproved enabled state
 │   │   ├── known_software.py  # bloatware/telemetry lookup + descriptions
-│   │   └── process_list.py    # full running-process enumeration + live
-│   │                          # CPU/memory usage (new — powers both the
-│   │                          # process manager view and startup-item
-│   │                          # usage correlation)
+│   │   ├── process_list.py    # process enumeration, grouping (union-find),
+│   │   │                      # role labeling via cmdline parsing, live
+│   │   │                      # CPU/memory usage
+│   │   ├── process_control.py # process termination: protected-process
+│   │   │                      # list, graceful->forceful terminate, logging
+│   │   ├── diagnostics.py     # rules-based "why is it slow" signatures
+│   │   │                      # (cpu_dominance, memory_pressure, disk_bound)
+│   │   └── system_specs.py    # static hardware/OS specs (CPU, RAM, GPU,
+│   │                          # storage, motherboard) via wmi, cached once
 │   ├── api/
 │   │   └── server.py          # FastAPI app + routes
 │   └── web/                   # static frontend (HTML/CSS/JS)
@@ -124,59 +152,74 @@ pc-health-dashboard/
 ```
 
 ## Current status
-Live stats, full startup/service audit with known-software lookup, search,
-the cyberpunk theme pass, the live process list (grouped by app, ~1s
-response for ~285 processes), and process grouping/tree view are all
-working and verified in-browser. Column sorting for the Process Manager
-table has *not* been built yet — deferred until explicitly requested.
-Next up: correlating startup/service audit entries with live process data.
+Feature-complete v1+ and verified in-browser on the user's real machine
+throughout. Working: live stats (gauge dials), full startup/service audit
+(known-software lookup, orphan detection, true StartupApproved enabled
+state, search, sort), Process Manager (grouping/tree view, role labeling,
+search, sort), a collapsible Diagnostics popup ("why is it slow"), a
+collapsible Specs popup (static hardware info), resizable panels, and
+process termination ("End Task") with a hardcoded protected-process list.
+Cyberpunk visual theme applied throughout. Security/privacy audit of the
+repo has been done (no personal data leaked in code, history, or
+fixtures — see git history for details if unsure).
+
+**Not yet built:** optimization score/report, top-offenders leaderboard,
+historical trend tracking, disk treemap, Scheduled Tasks audit, bloatware/
+service disable-enable management, correlating startup/service items with
+their live process data.
+
+**Not yet decided:** how to package/launch the app without manually
+running it from a terminal (options discussed: simple launcher script,
+system tray app, native window via pywebview, packaged .exe + auto-start
+— no decision made yet, revisit when the feature set feels done).
 
 ## Roadmap (rough order of work)
-1. ~~System stats collector + endpoint + live gauge dials on frontend.~~ Done.
+1. ~~System stats collector + endpoint + live gauge dials.~~ Done.
 2. ~~Startup/service audit (registry, startup folder, services via wmi).~~ Done.
 3. ~~Known-software lookup table for plain-English descriptions/impact.~~ Done.
 4. ~~Cyberpunk visual theme.~~ Done.
-5. ~~Full process list collector + `/api/processes` endpoint + Process
-   Manager view.~~ Done. Response time optimized (~1s for ~285 processes,
-   accepted as the practical floor for a psutil-based approach — a raw
+5. ~~Full process list collector + `/api/processes` + Process Manager
+   view.~~ Done. (~1s response for ~285 processes accepted as the
+   practical floor for a psutil-based approach; a raw
    `NtQuerySystemInformation`/`ctypes` rewrite was considered and
-   deliberately deferred, not needed for current goals).
-6. ~~Process grouping / tree view~~ Done. `group_processes()` clusters by
-   parent-child ancestry where child/parent share an executable name
-   (catches browser-style renderer/GPU/utility trees), falling back to
-   grouping same-named processes with no such link (catches svchost.exe-
-   style cases where many unrelated processes share a generic supervisor
-   parent). `/api/processes` returns groups with summed CPU/memory and
-   member processes; the Process Manager table renders these as
-   collapsed-by-default expandable rows. Verified live: correctly
-   identified the user's own Firefox session as one 16-process/~4.5GB
-   group and VS Code as 18 processes, with 90+ unrelated svchost.exe hosts
-   correctly kept in the honest "(Group)" fallback bucket rather than
-   implied to be one app.
-7. **Correlate startup/service audit items with live process data (current
-   focus)** — reuse
-   the process-list data to show real-time CPU/memory next to each
-   startup/service entry, not just its static impact estimate.
-8. **"Why is it slow" diagnostic engine** — rules-based analysis over live
-   stats + process data producing plain-English diagnoses (e.g. disk-bound
-   vs. memory-bound vs. CPU-bound bottleneck signatures).
-9. **Top offenders leaderboard** — top CPU/memory consumers sampled over a
-   rolling window (not just instantaneous), since instantaneous CPU% is
-   noisy.
-10. **Broader background-noise classification** — extend
+   deliberately deferred.)
+6. ~~Process grouping/tree view (union-find on parent-child + shared-name
+   fallback) + process role labeling via cmdline parsing.~~ Done. This
+   directly answers "why is memory full when I only have one YouTube tab
+   open."
+7. ~~Sortable columns + search on both Process Manager and Startup &
+   Services Audit (feature parity between the two).~~ Done.
+8. ~~"Why is it slow" diagnostic engine — cpu_dominance, memory_pressure,
+   disk_bound signatures, collapsible popup UI.~~ Done.
+9. ~~Orphaned startup-entry detection + true StartupApproved-based enabled
+   state (fixes Task Manager-disabled items showing as "Enabled").~~ Done.
+10. ~~Specs popup (CPU/RAM/GPU/storage/motherboard/OS via wmi, cached
+    once).~~ Done.
+11. ~~Resizable panels + layout reorder (Process Manager before Startup
+    Audit) + collapsible Diagnostics/Specs pills instead of a persistent
+    banner.~~ Done.
+12. ~~Process termination ("End Task") — hardcoded protected-process list,
+    individual-process-only, confirm dialog, graceful->forceful, logged.~~
+    Done.
+13. **Correlate startup/service audit items with live process data** —
+    reuse Process Manager's data to show real-time CPU/memory next to each
+    startup/service entry, not just its static impact estimate. Not yet
+    built, still a real gap.
+14. **Top offenders leaderboard** — top CPU/memory consumers sampled over
+    a rolling window, not just instantaneous.
+15. **Broader background-noise classification** — extend
     `known_software.py`'s concept to categorize *all* running processes
     (OS-critical / user app / browser-renderer / background-updater /
     telemetry), not just startup items.
-11. **Bloatware/service management (action layer)** — safe, reversible
-    controls (disable/enable only, not uninstall/delete) for startup items
-    and user-installed services, with confirmation previews and a change
-    log. Scope to items the known-software lookup recognizes first, not
-    arbitrary system services. This should come after the diagnostic/
-    classification work above, since it's most valuable once the tool can
-    clearly explain *why* something is worth disabling.
-12. Optimization score + report, synthesizing the diagnostic engine's
+16. **Bloatware/service management (action layer)** — safe, reversible
+    disable/enable controls for startup items and user-installed services,
+    with confirmation previews and a change log. Needs its own scoping
+    discussion before building (similar to how End Task was scoped) —
+    don't build without that discussion happening first.
+17. Optimization score + report, synthesizing the diagnostic engine's
     findings into an overall picture.
-13. Stretch: historical trend tracking, disk treemap, Scheduled Tasks audit.
+18. Stretch: historical trend tracking, disk treemap, Scheduled Tasks
+    audit, app packaging/launcher (see "Not yet decided" above).
 
 ## How to run
 ```

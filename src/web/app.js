@@ -265,37 +265,167 @@ async function pollDiagnostics() {
 pollDiagnostics();
 setInterval(pollDiagnostics, 2000);
 
-const diagnosticsIndicator = document.getElementById("diagnostics-indicator");
-const diagnosticsPopup = document.getElementById("diagnostics-popup");
-const diagnosticsClose = document.getElementById("diagnostics-close");
+// Shared by every top-right HUD pill (Specs, Diagnostics, …): wires up
+// click/keyboard toggling, an outside-click-to-collapse handler, and
+// mutual exclusion (opening one closes any other open HUD popup, so two
+// flyouts never overlap on screen). `onFirstOpen` is optional — pass it
+// for a popup whose data is static and should only be fetched lazily
+// (Specs) rather than kept fresh by a poll that runs regardless of
+// whether the popup is open (Diagnostics already does its own polling).
+const openHudPopups = [];
 
-function setDiagnosticsExpanded(expanded) {
-  diagnosticsPopup.hidden = !expanded;
-  diagnosticsIndicator.setAttribute("aria-expanded", String(expanded));
-  diagnosticsIndicator.classList.toggle("is-expanded", expanded);
+function makeHudPopup({ pillId, popupId, closeId, onFirstOpen }) {
+  const indicator = document.getElementById(pillId);
+  const popup = document.getElementById(popupId);
+  const closeButton = document.getElementById(closeId);
+  let hasLoadedOnce = false;
+
+  function setExpanded(expanded) {
+    popup.hidden = !expanded;
+    indicator.setAttribute("aria-expanded", String(expanded));
+    indicator.classList.toggle("is-expanded", expanded);
+  }
+
+  function close() {
+    setExpanded(false);
+  }
+
+  function open() {
+    for (const other of openHudPopups) {
+      if (other !== controller) other.close();
+    }
+    setExpanded(true);
+    if (!hasLoadedOnce && onFirstOpen) {
+      hasLoadedOnce = true;
+      onFirstOpen();
+    }
+  }
+
+  function toggle() {
+    if (popup.hidden) open();
+    else close();
+  }
+
+  indicator.addEventListener("click", toggle);
+  indicator.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  });
+  closeButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    close();
+  });
+
+  // Collapse on an outside click, but not on the click that opened it.
+  document.addEventListener("click", (e) => {
+    if (popup.hidden) return;
+    if (popup.contains(e.target) || indicator.contains(e.target)) return;
+    close();
+  });
+
+  const controller = { close };
+  openHudPopups.push(controller);
+  return controller;
 }
 
-diagnosticsIndicator.addEventListener("click", () => {
-  setDiagnosticsExpanded(diagnosticsPopup.hidden);
+makeHudPopup({
+  pillId: "diagnostics-indicator",
+  popupId: "diagnostics-popup",
+  closeId: "diagnostics-close",
 });
 
-diagnosticsIndicator.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    setDiagnosticsExpanded(diagnosticsPopup.hidden);
+function buildSpecRow(label, value) {
+  const row = document.createElement("div");
+  row.className = "spec-row";
+
+  const dt = document.createElement("span");
+  dt.className = "spec-label";
+  dt.textContent = label;
+  row.appendChild(dt);
+
+  const dd = document.createElement("span");
+  dd.className = "spec-value";
+  dd.textContent = value;
+  row.appendChild(dd);
+
+  return row;
+}
+
+function formatCpuSpec(cpu) {
+  if (!cpu) return "Not available";
+  const core_thread = cpu.physical_cores != null && cpu.logical_processors != null
+    ? `${cpu.physical_cores}C / ${cpu.logical_processors}T`
+    : null;
+  return [cpu.name, core_thread].filter(Boolean).join(" — ") || "Not available";
+}
+
+function formatMemorySpec(memory) {
+  if (!memory || memory.sticks.length === 0) return "Not available";
+  const stickSummaries = memory.sticks.map((stick) => {
+    const bits = [`${stick.capacity_gb.toFixed(0)} GB`];
+    if (stick.speed_mhz) bits.push(`${stick.speed_mhz} MHz`);
+    if (stick.memory_type) bits.push(stick.memory_type);
+    return bits.join(" ");
+  });
+  return `${memory.total_capacity_gb.toFixed(0)} GB total (${stickSummaries.join(", ")})`;
+}
+
+function formatGpuSpec(gpus) {
+  if (!gpus || gpus.length === 0) return "Not available";
+  return gpus.map((gpu) => gpu.name).join(", ");
+}
+
+function formatStorageSpec(disks) {
+  if (!disks || disks.length === 0) return "Not available";
+  return disks.map((disk) => `${disk.model} (${disk.capacity_gb.toFixed(0)} GB)`).join(", ");
+}
+
+function formatOsSpec(os) {
+  if (!os || !os.name) return "Not available";
+  const versionBits = [os.version, os.build ? `build ${os.build}` : null].filter(Boolean).join(", ");
+  return versionBits ? `${os.name} (${versionBits})` : os.name;
+}
+
+function formatMotherboardSpec(motherboard) {
+  if (!motherboard || (!motherboard.manufacturer && !motherboard.model)) return "Not available";
+  return [motherboard.manufacturer, motherboard.model].filter(Boolean).join(" ");
+}
+
+function renderSpecs(specs) {
+  const container = document.getElementById("specs-list");
+  container.innerHTML = "";
+
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(buildSpecRow("CPU", formatCpuSpec(specs.cpu)));
+  fragment.appendChild(buildSpecRow("RAM", formatMemorySpec(specs.memory)));
+  fragment.appendChild(buildSpecRow("GPU", formatGpuSpec(specs.gpus)));
+  fragment.appendChild(buildSpecRow("Storage", formatStorageSpec(specs.disks)));
+  fragment.appendChild(buildSpecRow("OS", formatOsSpec(specs.os)));
+  fragment.appendChild(buildSpecRow("Motherboard", formatMotherboardSpec(specs.motherboard)));
+  container.appendChild(fragment);
+}
+
+async function loadSpecs() {
+  const container = document.getElementById("specs-list");
+  try {
+    const res = await fetch("/api/specs");
+    const specs = await res.json();
+    renderSpecs(specs);
+  } catch (err) {
+    console.error("Failed to fetch system specs:", err);
+    container.innerHTML = '<p class="muted-note">Failed to load system specs.</p>';
   }
-});
+}
 
-diagnosticsClose.addEventListener("click", (e) => {
-  e.stopPropagation();
-  setDiagnosticsExpanded(false);
-});
-
-// Collapse on an outside click, but not on the click that opened it.
-document.addEventListener("click", (e) => {
-  if (diagnosticsPopup.hidden) return;
-  if (diagnosticsPopup.contains(e.target) || diagnosticsIndicator.contains(e.target)) return;
-  setDiagnosticsExpanded(false);
+makeHudPopup({
+  pillId: "specs-indicator",
+  popupId: "specs-popup",
+  closeId: "specs-close",
+  // Specs are static for the life of the process — fetched lazily on the
+  // popup's first open rather than polled, unlike Diagnostics above.
+  onFirstOpen: loadSpecs,
 });
 
 // Shared by the Process Manager and Startup Audit tables: manages a
@@ -622,6 +752,100 @@ document.getElementById("process-search").addEventListener("input", (e) => {
   applyProcessFilterAndRender();
 });
 
+// --- End Task: confirmation modal + toast feedback + the terminate call ---
+
+function showConfirmModal({ body }) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById("confirm-modal-overlay");
+    const bodyEl = document.getElementById("confirm-modal-body");
+    const cancelButton = document.getElementById("confirm-modal-cancel");
+    const confirmButton = document.getElementById("confirm-modal-confirm");
+
+    bodyEl.textContent = body;
+    overlay.hidden = false;
+
+    function cleanup(result) {
+      overlay.hidden = true;
+      cancelButton.removeEventListener("click", onCancel);
+      confirmButton.removeEventListener("click", onConfirm);
+      overlay.removeEventListener("click", onOverlayClick);
+      resolve(result);
+    }
+    function onCancel() {
+      cleanup(false);
+    }
+    function onConfirm() {
+      cleanup(true);
+    }
+    function onOverlayClick(e) {
+      // Click on the dimmed backdrop itself (not the card) cancels, same as
+      // the HUD popups' outside-click-to-close behavior.
+      if (e.target === overlay) cleanup(false);
+    }
+
+    cancelButton.addEventListener("click", onCancel);
+    confirmButton.addEventListener("click", onConfirm);
+    overlay.addEventListener("click", onOverlayClick);
+  });
+}
+
+const TOAST_VISIBLE_MS = 4000;
+
+function showToast(message, kind) {
+  const container = document.getElementById("toast-container");
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${kind}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => toast.classList.add("toast-visible"));
+  setTimeout(() => {
+    toast.classList.remove("toast-visible");
+    setTimeout(() => toast.remove(), 300);
+  }, TOAST_VISIBLE_MS);
+}
+
+async function endTask(pid, name) {
+  try {
+    const res = await fetch(`/api/processes/${pid}/terminate`, { method: "POST" });
+    const result = await res.json();
+    showToast(result.message, result.outcome === "success" ? "success" : "error");
+  } catch (err) {
+    console.error("Failed to end task:", err);
+    showToast(`Failed to end "${name}" (PID ${pid}) — the request itself failed.`, "error");
+  } finally {
+    // Refresh promptly so the table reflects the outcome instead of
+    // waiting for the next 2s poll (the server also invalidates its own
+    // cache on a successful termination — see server.py).
+    pollProcesses();
+  }
+}
+
+function buildEndTaskCell(member) {
+  const td = document.createElement("td");
+  td.className = "action-cell";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "end-task-btn";
+  button.textContent = "End Task";
+
+  if (member.is_protected) {
+    button.disabled = true;
+    button.title = "System-protected process — cannot be ended from here.";
+  } else {
+    button.addEventListener("click", async () => {
+      const confirmed = await showConfirmModal({
+        body: `End "${member.name}" (PID ${member.pid}, ${member.memory_mb.toFixed(1)} MB)? This cannot be undone.`,
+      });
+      if (confirmed) endTask(member.pid, member.name);
+    });
+  }
+
+  td.appendChild(button);
+  return td;
+}
+
 function buildProcessMemberRow(member) {
   const tr = document.createElement("tr");
   tr.className = "process-member-row";
@@ -650,6 +874,8 @@ function buildProcessMemberRow(member) {
   const memTd = document.createElement("td");
   memTd.textContent = `${member.memory_mb.toFixed(1)} MB`;
   tr.appendChild(memTd);
+
+  tr.appendChild(buildEndTaskCell(member));
 
   return tr;
 }
@@ -685,6 +911,13 @@ function buildProcessGroupRow(group) {
   memTd.textContent = `${group.total_memory_mb.toFixed(1)} MB`;
   tr.appendChild(memTd);
 
+  // End Task acts on one process, not a whole group — no action here;
+  // expand the group and end its individual member processes instead.
+  const actionsTd = document.createElement("td");
+  actionsTd.className = "muted-note";
+  actionsTd.textContent = "—";
+  tr.appendChild(actionsTd);
+
   return tr;
 }
 
@@ -710,6 +943,8 @@ function buildProcessSingleRow(group) {
   memTd.textContent = `${member.memory_mb.toFixed(1)} MB`;
   tr.appendChild(memTd);
 
+  tr.appendChild(buildEndTaskCell(member));
+
   return tr;
 }
 
@@ -722,7 +957,7 @@ function renderProcessTable(groups) {
     const noDataYet = processGroups.length === 0;
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 5;
     td.className = "muted-note";
     td.textContent = noDataYet ? "No process data available." : "No processes match your filter.";
     tr.appendChild(td);
@@ -768,7 +1003,7 @@ async function pollProcesses() {
     applyProcessFilterAndRender();
   } catch (err) {
     console.error("Failed to fetch process list:", err);
-    tbody.innerHTML = '<tr><td colspan="4" class="muted-note">Failed to load process data.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted-note">Failed to load process data.</td></tr>';
   } finally {
     processPollInFlight = false;
   }
