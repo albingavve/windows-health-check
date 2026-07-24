@@ -18,9 +18,9 @@ why, and surfacing plain-English diagnoses instead of just numbers.
 
 ## Screenshots
 
-![Process Manager](screenshot_process_manager.png)
+![Process Manager](assets/screenshot_process_manager.png)
 
-![Startup & Services Audit](screenshot_startup_audit.png)
+![Startup Audit](assets/screenshot_startup_audit.png)
 
 ## Features
 
@@ -173,3 +173,6 @@ Python 3.11+, FastAPI, `psutil`, `pywin32`/`wmi`, Chart.js, vanilla JS/CSS
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+[def]: screenshot_process_manager.png
