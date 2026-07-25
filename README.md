@@ -2,8 +2,8 @@
 
 A local, Windows 11-focused replacement for Task Manager that doesn't just
 show you numbers, but also explains what your machine is doing and why. 
-STrying to make it easier to understand and optimize Windows instead of for example having to switchi to Linux to
-feel in control of your own PC.
+Trying to make it easier to understand and optimize Windows instead of for example having to switch to Linux to
+feel in control of your own PC. 
 
 **Status: v1 - feature-complete and daily-driver ready.**
 
